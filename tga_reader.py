@@ -37,6 +37,8 @@ class TGARun:
     rows: list[tuple[float, ...]]
     gas: list[int | None]  # active gas for each row (None if unknown)
     gas_events: list[tuple[float, int]] = field(default_factory=list)  # (time, gas)
+    event_rows: list[int] = field(default_factory=list)  # row index where each switch occurred
+    complete: bool = True  # False if the end-of-data marker was missing
 
     def get(self, key: str, default: str = "") -> str:
         for k, v in self.header:
@@ -126,9 +128,10 @@ def read_tga(path: str | Path) -> TGARun:
         rows.append(r)
         gas_col.append(gas)
 
-    if not ended:
-        raise TGAFormatError("end-of-data marker not found (file truncated or run still in progress?)")
+    if not rows:
+        raise TGAFormatError("file contains no data points")
 
     # Event time = time of the first data point recorded after the switch.
     events = [(rows[i][0], g) for i, g in event_idx if i < len(rows)]
-    return TGARun(path, header, signals, rows, gas_col, events)
+    event_rows = sorted({i for i, _ in event_idx if 0 < i < len(rows)})
+    return TGARun(path, header, signals, rows, gas_col, events, event_rows, complete=ended)
