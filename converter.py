@@ -10,7 +10,7 @@ from pathlib import Path
 from tga_reader import TGARun
 
 APP_NAME = "TGA Q500 Data Converter"
-APP_VERSION = "0.1.1"
+APP_VERSION = "0.2.0"
 
 UA_POINT_TARGET = 19000
 UA_REDUCE_ABOVE = 20000  # UA leaves runs of up to ~19,800 points untouched; 21,450 were reduced
@@ -23,19 +23,20 @@ class ColumnDef:
     label: str           # shown in the app
     header: str          # CSV header
     default: bool
+    group: str           # "raw" = recorded by the instrument, "calc" = calculated
 
 
 # Order here is the column order in the CSV.
 COLUMNS: list[ColumnDef] = [
-    ColumnDef("time", "Time (min)", "Time (min)", True),
-    ColumnDef("temp", "Temperature (°C)", "Temperature (°C)", True),
-    ColumnDef("weight", "Weight (mg)", "Weight (mg)", True),
-    ColumnDef("weight_pct", "Weight (%)", "Weight (%)", True),
-    ColumnDef("dtg_time", "Derivative weight (%/min)", "Deriv. Weight (%/min)", False),
-    ColumnDef("dtg_temp", "Derivative weight (%/°C)", "Deriv. Weight (%/°C)", False),
-    ColumnDef("balance_flow", "Balance purge flow (mL/min)", "Balance Purge Flow (mL/min)", False),
-    ColumnDef("sample_flow", "Sample purge flow (mL/min)", "Sample Purge Flow (mL/min)", False),
-    ColumnDef("gas", "Active gas (1 or 2)", "Gas", False),
+    ColumnDef("time", "Time (min)", "Time (min)", True, "raw"),
+    ColumnDef("temp", "Temperature (°C)", "Temperature (°C)", True, "raw"),
+    ColumnDef("weight", "Weight (mg)", "Weight (mg)", True, "raw"),
+    ColumnDef("weight_pct", "Weight (%)", "Weight (%)", True, "calc"),
+    ColumnDef("dtg_time", "Derivative weight (%/min)", "Deriv. Weight (%/min)", False, "calc"),
+    ColumnDef("dtg_temp", "Derivative weight (%/°C)", "Deriv. Weight (%/°C)", False, "calc"),
+    ColumnDef("balance_flow", "Balance purge flow (mL/min)", "Balance Purge Flow (mL/min)", False, "raw"),
+    ColumnDef("sample_flow", "Sample purge flow (mL/min)", "Sample Purge Flow (mL/min)", False, "raw"),
+    ColumnDef("gas", "Active gas (1 or 2)", "Gas", False, "raw"),
 ]
 COLUMN_KEYS = [c.key for c in COLUMNS]
 

@@ -34,6 +34,63 @@ except Exception:  # pragma: no cover
     _BaseTk = tk.Tk
 
 
+def desktop_dirs() -> list[Path]:
+    """Every folder Windows shows as 'Desktop' (incl. OneDrive-redirected and Public)."""
+    found: list[Path] = []
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class GUID(ctypes.Structure):
+                _fields_ = [("a", wintypes.DWORD), ("b", wintypes.WORD), ("c", wintypes.WORD), ("d", ctypes.c_ubyte * 8)]
+
+            def known_folder(a, b, c, d) -> Path | None:
+                g = GUID(a, b, c, (ctypes.c_ubyte * 8)(*d))
+                buf = ctypes.c_wchar_p()
+                if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(g), 0, None, ctypes.byref(buf)) == 0:
+                    p = Path(buf.value)
+                    ctypes.windll.ole32.CoTaskMemFree(buf)
+                    return p
+                return None
+
+            for guid in (
+                (0xB4BFCC3A, 0xDB2C, 0x424C, (0xB0, 0x29, 0x7F, 0xE9, 0x9A, 0x87, 0xC6, 0x41)),  # user Desktop
+                (0xC4AA340D, 0xF20F, 0x4863, (0xAF, 0xEF, 0xF8, 0x7E, 0xF2, 0xE6, 0xBA, 0x25)),  # Public Desktop
+            ):
+                p = known_folder(*guid)
+                if p:
+                    found.append(p)
+        except Exception:
+            pass
+    for env in ("USERPROFILE", "OneDrive", "PUBLIC"):
+        if os.environ.get(env):
+            found.append(Path(os.environ[env]) / "Desktop")
+    found.append(Path.home() / "Desktop")
+    return found
+
+
+def is_desktop(folder: Path) -> bool:
+    """True if `folder` IS a Desktop folder (subfolders of the Desktop are allowed)."""
+    try:
+        target = os.path.normcase(str(folder.resolve()))
+    except OSError:
+        return False
+    for d in desktop_dirs():
+        try:
+            if os.path.normcase(str(d.resolve())) == target:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+DESKTOP_MSG = (
+    "Saving converted files directly on the Desktop is not allowed.\n\n"
+    "Choose another folder, or create a subfolder on the Desktop and save there."
+)
+
+
 def settings_path() -> Path:
     base = os.environ.get("APPDATA") or os.path.join(Path.home(), ".config")
     return Path(base) / "TGA-Q500-DataConverter" / "settings.json"
@@ -43,8 +100,8 @@ class App(_BaseTk):
     def __init__(self) -> None:
         super().__init__()
         self.title(f"{APP_NAME}  v{APP_VERSION}")
-        self.geometry("980x640")
-        self.minsize(860, 560)
+        self.geometry("1060x660")
+        self.minsize(980, 580)
         self.files: dict[str, dict] = {}  # tree item id -> {"path", "run", "error"}
         self.queue: queue.Queue = queue.Queue()
         self.busy = False
@@ -126,54 +183,55 @@ class App(_BaseTk):
         # --- columns + options ---
         mid = ttk.Frame(root)
         mid.grid(row=2, column=0, sticky="ew", pady=(10, 0))
-        mid.columnconfigure(0, weight=3)
-        mid.columnconfigure(1, weight=2)
-
-        colbox = ttk.LabelFrame(mid, text=" 2. Columns to export ", style="Section.TLabelframe", padding=8)
-        colbox.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        for i, w in enumerate((2, 3, 4)):
+            mid.columnconfigure(i, weight=w)
         self.col_vars: dict[str, tk.BooleanVar] = {}
-        half = (len(COLUMNS) + 1) // 2
-        for i, c in enumerate(COLUMNS):
-            v = tk.BooleanVar(value=c.default)
-            self.col_vars[c.key] = v
-            ttk.Checkbutton(colbox, text=c.label, variable=v).grid(
-                row=i % half, column=i // half, sticky="w", padx=(0, 24), pady=1
-            )
 
-        opt = ttk.LabelFrame(mid, text=" 3. Options ", style="Section.TLabelframe", padding=8)
-        opt.grid(row=0, column=1, sticky="nsew")
+        rawbox = ttk.LabelFrame(mid, text=" 2. Columns to export ", style="Section.TLabelframe", padding=8)
+        rawbox.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        calcbox = ttk.LabelFrame(mid, text=" 3. Columns to calculate ", style="Section.TLabelframe", padding=8)
+        calcbox.grid(row=0, column=1, sticky="nsew", padx=(0, 8))
+        for box, group in ((rawbox, "raw"), (calcbox, "calc")):
+            for c in (c for c in COLUMNS if c.group == group):
+                v = tk.BooleanVar(value=c.default)
+                self.col_vars[c.key] = v
+                ttk.Checkbutton(box, text=c.label, variable=v, command=self._dtg_state).pack(anchor="w", pady=1)
+
+        self.window_var = tk.StringVar(value="10")
+        wrow = ttk.Frame(calcbox)
+        wrow.pack(anchor="w", padx=(22, 0), pady=(2, 0))
+        self.window_label = ttk.Label(wrow, text="Smoothing window:")
+        self.window_label.pack(side="left")
+        self.window_spin = ttk.Spinbox(wrow, from_=1, to=120, increment=1, width=5, textvariable=self.window_var)
+        self.window_spin.pack(side="left", padx=4)
+        self.window_unit = ttk.Label(wrow, text="s")
+        self.window_unit.pack(side="left")
+
+        opt = ttk.LabelFrame(mid, text=" 4. Options ", style="Section.TLabelframe", padding=8)
+        opt.grid(row=0, column=2, sticky="nsew")
         opt.columnconfigure(1, weight=1)
         self.reduce_var = tk.BooleanVar(value=False)
         self.info_var = tk.BooleanVar(value=True)
-        self.window_var = tk.StringVar(value="10")
         self.outmode_var = tk.StringVar(value="same")
         self.outdir_var = tk.StringVar(value="")
 
         ttk.Checkbutton(
-            opt, text=f"Reduce long runs to ~{UA_POINT_TARGET:,} points (Universal Analysis style)", variable=self.reduce_var
+            opt, text=f"Reduce long runs to ~{UA_POINT_TARGET:,} points (UA style)", variable=self.reduce_var
         ).grid(row=0, column=0, columnspan=3, sticky="w")
         ttk.Checkbutton(opt, text="Write info file (sample, method, gas switches…)", variable=self.info_var).grid(
             row=1, column=0, columnspan=3, sticky="w"
         )
-        wrow = ttk.Frame(opt)
-        wrow.grid(row=2, column=0, columnspan=3, sticky="w", pady=(2, 6))
-        ttk.Label(wrow, text="Derivative smoothing window:").pack(side="left")
-        ttk.Spinbox(wrow, from_=1, to=120, increment=1, width=5, textvariable=self.window_var).pack(
-            side="left", padx=4
-        )
-        ttk.Label(wrow, text="s").pack(side="left")
-
-        ttk.Label(opt, text="Save CSV files to:").grid(row=3, column=0, columnspan=3, sticky="w")
+        ttk.Label(opt, text="Save CSV files to:").grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
         ttk.Radiobutton(
             opt, text="Same folder as each file", value="same", variable=self.outmode_var, command=self._out_mode
-        ).grid(row=4, column=0, columnspan=3, sticky="w")
+        ).grid(row=3, column=0, columnspan=3, sticky="w")
         ttk.Radiobutton(opt, text="This folder:", value="custom", variable=self.outmode_var, command=self._out_mode).grid(
-            row=5, column=0, sticky="w"
+            row=4, column=0, sticky="w"
         )
         self.outdir_entry = ttk.Entry(opt, textvariable=self.outdir_var)
-        self.outdir_entry.grid(row=5, column=1, sticky="ew", padx=4)
+        self.outdir_entry.grid(row=4, column=1, sticky="ew", padx=4)
         self.browse_btn = ttk.Button(opt, text="Browse…", command=self.pick_outdir)
-        self.browse_btn.grid(row=5, column=2)
+        self.browse_btn.grid(row=4, column=2)
 
         # --- bottom bar ---
         bottom = ttk.Frame(root)
@@ -187,6 +245,13 @@ class App(_BaseTk):
         self.convert_btn.grid(row=0, column=2)
 
         self._out_mode()
+        self._dtg_state()
+
+    def _dtg_state(self) -> None:
+        on = self.col_vars["dtg_time"].get() or self.col_vars["dtg_temp"].get()
+        self.window_spin.configure(state="normal" if on else "disabled")
+        for w in (self.window_label, self.window_unit):
+            w.configure(state="normal" if on else "disabled")
 
     # ---------- errors ----------
     def report_callback_exception(self, exc, val, tb) -> None:
@@ -297,6 +362,9 @@ class App(_BaseTk):
     def pick_outdir(self) -> None:
         d = filedialog.askdirectory(title="Save CSV files to…")
         if d:
+            if is_desktop(Path(d)):
+                messagebox.showwarning(APP_NAME, DESKTOP_MSG)
+                return
             self.outdir_var.set(d)
 
     def _collect_options(self) -> ExportOptions | None:
@@ -304,19 +372,24 @@ class App(_BaseTk):
         if not cols:
             messagebox.showwarning(APP_NAME, "Select at least one column to export.")
             return None
-        try:
-            window = float(self.window_var.get())
-            if not 0 < window <= 600:
-                raise ValueError
-        except ValueError:
-            messagebox.showwarning(APP_NAME, "Derivative window must be a number of seconds (1–600).")
-            return None
+        window = 10.0
+        if "dtg_time" in cols or "dtg_temp" in cols:
+            try:
+                window = float(self.window_var.get())
+                if not 0 < window <= 600:
+                    raise ValueError
+            except ValueError:
+                messagebox.showwarning(APP_NAME, "Smoothing window must be a number of seconds (1–600).")
+                return None
         outdir = None
         if self.outmode_var.get() == "custom":
             if not self.outdir_var.get().strip():
                 messagebox.showwarning(APP_NAME, "Choose an output folder, or select 'Same folder as each file'.")
                 return None
             outdir = Path(self.outdir_var.get().strip())
+            if is_desktop(outdir):
+                messagebox.showwarning(APP_NAME, DESKTOP_MSG)
+                return None
         return ExportOptions(
             columns=cols,
             reduce_like_ua=self.reduce_var.get(),
@@ -336,6 +409,17 @@ class App(_BaseTk):
         opts = self._collect_options()
         if opts is None:
             return
+        if opts.output_dir is None:
+            on_desktop = [v["path"].name for _, v in jobs if is_desktop(v["path"].parent)]
+            if on_desktop:
+                names = "\n".join(on_desktop[:8]) + ("\n…" if len(on_desktop) > 8 else "")
+                messagebox.showwarning(
+                    APP_NAME,
+                    f"{len(on_desktop)} file(s) are on the Desktop:\n\n{names}\n\n"
+                    "With 'Same folder as each file' their CSVs would be saved on the Desktop.\n"
+                    "Select 'This folder' and choose another location.",
+                )
+                return
 
         existing = []
         for _, v in jobs:
@@ -410,34 +494,20 @@ class App(_BaseTk):
         self.after(100, self._poll)
 
     # ---------- settings ----------
+    # Shared instrument PC: every session starts from the default columns/options.
+    # Only the last custom output folder is remembered, to save browsing.
     def _load_settings(self) -> None:
         try:
             s = json.loads(settings_path().read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return
-        for k, v in s.get("columns", {}).items():
-            if k in self.col_vars:
-                self.col_vars[k].set(bool(v))
-        self.reduce_var.set(bool(s.get("reduce", False)))
-        self.info_var.set(bool(s.get("info", True)))
-        self.window_var.set(str(s.get("dtg_window_s", 10)))
-        self.outmode_var.set(s.get("outmode", "same"))
         self.outdir_var.set(s.get("outdir", ""))
-        self._out_mode()
 
     def _save_settings(self) -> None:
-        s = {
-            "columns": {k: v.get() for k, v in self.col_vars.items()},
-            "reduce": self.reduce_var.get(),
-            "info": self.info_var.get(),
-            "dtg_window_s": self.window_var.get(),
-            "outmode": self.outmode_var.get(),
-            "outdir": self.outdir_var.get(),
-        }
         try:
             p = settings_path()
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps(s, indent=2), encoding="utf-8")
+            p.write_text(json.dumps({"outdir": self.outdir_var.get()}, indent=2), encoding="utf-8")
         except OSError:
             pass
 
