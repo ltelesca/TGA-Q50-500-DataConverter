@@ -8,6 +8,7 @@ import queue
 import sys
 import threading
 import tkinter as tk
+import traceback
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -24,12 +25,21 @@ from converter import (
 from tga_reader import TGAFormatError, is_raw_file, read_tga
 
 
+try:  # drag-and-drop support (bundled in the .exe); the app still works without it
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+
+    _BaseTk = TkinterDnD.Tk
+except Exception:  # pragma: no cover
+    DND_FILES = None
+    _BaseTk = tk.Tk
+
+
 def settings_path() -> Path:
     base = os.environ.get("APPDATA") or os.path.join(Path.home(), ".config")
     return Path(base) / "TGA-Q500-DataConverter" / "settings.json"
 
 
-class App(tk.Tk):
+class App(_BaseTk):
     def __init__(self) -> None:
         super().__init__()
         self.title(f"{APP_NAME}  v{APP_VERSION}")
@@ -41,6 +51,7 @@ class App(tk.Tk):
 
         self._style()
         self._build()
+        self._enable_drop()
         self._load_settings()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -177,6 +188,44 @@ class App(tk.Tk):
 
         self._out_mode()
 
+    # ---------- errors ----------
+    def report_callback_exception(self, exc, val, tb) -> None:
+        """Show unexpected errors instead of failing silently (no console in the .exe)."""
+        text = "".join(traceback.format_exception(exc, val, tb))
+        try:
+            log = settings_path().with_name("error.log")
+            log.parent.mkdir(parents=True, exist_ok=True)
+            with open(log, "a", encoding="utf-8") as fh:
+                fh.write(text + "\n")
+        except OSError:
+            log = None
+        messagebox.showerror(
+            APP_NAME,
+            f"Unexpected error:\n\n{val}\n\n" + (f"Details were saved to:\n{log}" if log else ""),
+        )
+
+    # ---------- drag and drop ----------
+    def _enable_drop(self) -> None:
+        if DND_FILES is None:
+            return
+        for w in (self.tree, self.empty_hint, self):
+            try:
+                w.drop_target_register(DND_FILES)
+                w.dnd_bind("<<Drop>>", self._on_drop)
+            except Exception:
+                pass
+        self.empty_hint.configure(text="Drag .001 / .002 / … files or folders here, or use Add files…")
+
+    def _on_drop(self, event) -> None:
+        paths: list[Path] = []
+        for item in self.tk.splitlist(event.data):
+            p = Path(item)
+            if p.is_dir():
+                paths += sorted(q for q in p.iterdir() if q.is_file() and is_raw_file(q.name))
+            elif p.is_file():
+                paths.append(p)
+        self._add_paths(paths)
+
     # ---------- files ----------
     def add_files(self) -> None:
         paths = filedialog.askopenfilenames(
@@ -250,7 +299,7 @@ class App(tk.Tk):
         if d:
             self.outdir_var.set(d)
 
-    def _options(self) -> ExportOptions | None:
+    def _collect_options(self) -> ExportOptions | None:
         cols = [k for k, v in self.col_vars.items() if v.get()]
         if not cols:
             messagebox.showwarning(APP_NAME, "Select at least one column to export.")
@@ -284,7 +333,7 @@ class App(tk.Tk):
         if not jobs:
             messagebox.showinfo(APP_NAME, "Add at least one readable .001 / .002 / … file first.")
             return
-        opts = self._options()
+        opts = self._collect_options()
         if opts is None:
             return
 

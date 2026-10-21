@@ -10,7 +10,7 @@ from pathlib import Path
 from tga_reader import TGARun
 
 APP_NAME = "TGA Q500 Data Converter"
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.1"
 
 UA_POINT_TARGET = 19000
 UA_REDUCE_ABOVE = 20000  # UA leaves runs of up to ~19,800 points untouched; 21,450 were reduced
