@@ -26,14 +26,28 @@ exists, the app asks before overwriting.
 
 ## Columns
 
+**Columns to export** (recorded by the instrument)
+
 | Column | Source |
 |---|---|
 | Time (min), Temperature (°C), Weight (mg) | Raw signals |
 | Balance / Sample purge flow (mL/min) | Raw signals |
-| Weight (%) | 100 × Weight / first recorded weight |
-| Deriv. Weight (%/min) | Least-squares slope of Weight (%) over a centred window (default 10 s) |
-| Deriv. Weight (%/°C) | (%/min) ÷ heating rate; blank where heating rate < 0.1 °C/min (isothermal) |
 | Gas | Active gas (1 or 2), from the gas-switch records in the file |
+
+**Columns to calculate**
+
+| Column | Definition |
+|---|---|
+| Weight (%) | 100 × Weight / first recorded weight |
+| Weight dry basis (%) | 100 × Weight / weight when the sample first reaches the reference temperature (default 150 °C) |
+| Mass Loss (%) | 100 − Weight (%) |
+| Heating Rate (°C/min) | Least-squares slope of Temperature over the smoothing window |
+| Deriv. Weight (%/min), (mg/min) | Least-squares slope of Weight over a centred window (default 10 s) |
+| Deriv. Weight (%/°C) | (%/min) ÷ heating rate; blank where heating rate < 0.1 °C/min (isothermal) |
+
+The info file also lists **results** computed from all recorded points:
+initial/final weight, final residue (%), total mass loss, and the
+temperatures at 1 %, 5 % and 10 % mass loss.
 
 ## Full data vs. Universal Analysis
 

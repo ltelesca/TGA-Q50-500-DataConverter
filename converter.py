@@ -10,7 +10,7 @@ from pathlib import Path
 from tga_reader import TGARun
 
 APP_NAME = "TGA Q500 Data Converter"
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.3.0"
 
 UA_POINT_TARGET = 19000
 UA_REDUCE_ABOVE = 20000  # UA leaves runs of up to ~19,800 points untouched; 21,450 were reduced
@@ -26,18 +26,24 @@ class ColumnDef:
     group: str           # "raw" = recorded by the instrument, "calc" = calculated
 
 
-# Order here is the column order in the CSV.
+# Order here is the column order in the CSV: recorded signals first, then calculated.
 COLUMNS: list[ColumnDef] = [
     ColumnDef("time", "Time (min)", "Time (min)", True, "raw"),
     ColumnDef("temp", "Temperature (°C)", "Temperature (°C)", True, "raw"),
     ColumnDef("weight", "Weight (mg)", "Weight (mg)", True, "raw"),
-    ColumnDef("weight_pct", "Weight (%)", "Weight (%)", True, "calc"),
-    ColumnDef("dtg_time", "Derivative weight (%/min)", "Deriv. Weight (%/min)", False, "calc"),
-    ColumnDef("dtg_temp", "Derivative weight (%/°C)", "Deriv. Weight (%/°C)", False, "calc"),
     ColumnDef("balance_flow", "Balance purge flow (mL/min)", "Balance Purge Flow (mL/min)", False, "raw"),
     ColumnDef("sample_flow", "Sample purge flow (mL/min)", "Sample Purge Flow (mL/min)", False, "raw"),
     ColumnDef("gas", "Active gas (1 or 2)", "Gas", False, "raw"),
+    ColumnDef("weight_pct", "Weight (%)", "Weight (%)", True, "calc"),
+    ColumnDef("weight_pct_dry", "Weight (%), dry basis", "Weight dry basis (%)", False, "calc"),
+    ColumnDef("mass_loss", "Mass loss (%)", "Mass Loss (%)", False, "calc"),
+    ColumnDef("heating_rate", "Heating rate (°C/min)", "Heating Rate (°C/min)", False, "calc"),
+    ColumnDef("dtg_time", "Derivative weight (%/min)", "Deriv. Weight (%/min)", False, "calc"),
+    ColumnDef("dtg_temp", "Derivative weight (%/°C)", "Deriv. Weight (%/°C)", False, "calc"),
+    ColumnDef("dtg_mg", "Derivative weight (mg/min)", "Deriv. Weight (mg/min)", False, "calc"),
 ]
+# Calculated columns that use the smoothing window.
+SMOOTHED_KEYS = ("heating_rate", "dtg_time", "dtg_temp", "dtg_mg")
 COLUMN_KEYS = [c.key for c in COLUMNS]
 
 # Which raw signal each direct column comes from (matched by name prefix).
@@ -56,6 +62,7 @@ class ExportOptions:
     reduce_like_ua: bool = False
     write_info: bool = True
     dtg_window_s: float = 10.0
+    dry_temp_c: float = 150.0
     output_dir: Path | None = None  # None = next to the source file
 
 
@@ -105,6 +112,28 @@ def _local_slope(x: list[float], y: list[float], half: int) -> list[float | None
     return out
 
 
+def _weight_at_temperature(T: list[float], W: list[float], target: float) -> float | None:
+    """Weight when the temperature first reaches `target` (linear interpolation)."""
+    if T[0] >= target:
+        return W[0]
+    for i in range(1, len(T)):
+        if T[i] >= target:
+            t0, t1 = T[i - 1], T[i]
+            f = (target - t0) / (t1 - t0) if t1 != t0 else 0.0
+            return W[i - 1] + f * (W[i] - W[i - 1])
+    return None
+
+
+def _temperature_at_loss(T: list[float], pct: list[float], loss: float) -> float | None:
+    """Temperature where Weight (%) first drops to 100 - loss (linear interpolation)."""
+    level = 100.0 - loss
+    for i in range(1, len(pct)):
+        if pct[i] <= level < pct[i - 1]:
+            f = (pct[i - 1] - level) / (pct[i - 1] - pct[i])
+            return T[i - 1] + f * (T[i] - T[i - 1])
+    return None
+
+
 def _reduce_blocks(n: int, event_rows: list[int], target: int) -> list[tuple[int, int]]:
     """Blocks of consecutive rows to average, restarting at every gas switch."""
     if n <= target:
@@ -144,6 +173,17 @@ def build_table(run: TGARun, opts: ExportOptions) -> tuple[list[str], list[list[
         raise ConversionError("first recorded weight is zero; cannot compute Weight (%)")
     pct = [100.0 * w / w0 for w in W]
     cols["weight_pct"] = pct
+    cols["mass_loss"] = [100.0 - p for p in pct]
+
+    if "weight_pct_dry" in opts.columns:
+        w_dry = _weight_at_temperature(T, W, opts.dry_temp_c)
+        if w_dry is None or w_dry == 0:
+            warnings.append(
+                f"sample never reached {opts.dry_temp_c:g} °C; Weight dry basis column left blank"
+            )
+            cols["weight_pct_dry"] = [None] * n
+        else:
+            cols["weight_pct_dry"] = [100.0 * w / w_dry for w in W]
 
     for key in ("balance_flow", "sample_flow"):
         if key in opts.columns:
@@ -153,16 +193,18 @@ def build_table(run: TGARun, opts: ExportOptions) -> tuple[list[str], list[list[
             else:
                 cols[key] = [r[idx[key]] for r in rows]
 
-    if "dtg_time" in opts.columns or "dtg_temp" in opts.columns:
+    if any(k in opts.columns for k in SMOOTHED_KEYS):
         dt_s = (t[-1] - t[0]) * 60 / max(n - 1, 1) if n > 1 else 0.5
         half = max(1, round(opts.dtg_window_s / 2 / dt_s)) if dt_s > 0 else 1
-        dwdt = _local_slope(t, pct, half)  # %/min
-        cols["dtg_time"] = dwdt
+        dWdt = _local_slope(t, W, half)  # mg/min
+        cols["dtg_mg"] = dWdt
+        cols["dtg_time"] = [None if v is None else 100.0 * v / w0 for v in dWdt]  # %/min
+        dTdt = _local_slope(t, T, half) if ("heating_rate" in opts.columns or "dtg_temp" in opts.columns) else []
+        cols["heating_rate"] = dTdt
         if "dtg_temp" in opts.columns:
-            dTdt = _local_slope(t, T, half)  # °C/min
             cols["dtg_temp"] = [
                 (a / b) if (a is not None and b is not None and abs(b) >= DTG_MIN_HEATING_RATE) else None
-                for a, b in zip(dwdt, dTdt)
+                for a, b in zip(cols["dtg_time"], dTdt)
             ]
 
     if "gas" in opts.columns:
@@ -242,15 +284,40 @@ def build_info(run: TGARun, opts: ExportOptions, n_out: int, headers: list[str],
         lines += ["", "Gas switches (time of first point after the switch)"]
         lines += [f"  {t:10.4f} min  -> gas {gnum}" for t, gnum in run.gas_events]
 
+    wi = _signal_index(run, "Weight")
+    if wi is not None and ti is not None and run.rows[0][wi] != 0:
+        W = [r[wi] for r in run.rows]
+        T = [r[ti] for r in run.rows]
+        pct = [100.0 * w / W[0] for w in W]
+        lines += ["", "Results (from all recorded points, relative to the first recorded weight)"]
+        lines.append(f"  Initial weight     {W[0]:.4f} mg")
+        lines.append(f"  Final weight       {W[-1]:.4f} mg   (at {T[-1]:.1f} °C)")
+        lines.append(f"  Final residue      {pct[-1]:.2f} %")
+        lines.append(f"  Total mass loss    {W[0] - W[-1]:.4f} mg   ({100 - pct[-1]:.2f} %)")
+        for loss in (1, 5, 10):
+            tx = _temperature_at_loss(T, pct, loss)
+            label = f"T at {loss}% loss"
+            lines.append(f"  {label:<19}" + (f"{tx:.1f} °C" if tx is not None else "not reached"))
+        lines.append("  (T at x% loss = temperature where the weight first drops below 100 - x %;")
+        lines.append("   for runs with isothermal holds, cooling or gas cycling, read it with care.)")
+
     lines += ["", "CSV columns"]
     lines += [f"  {h}" for h in headers]
     lines += ["", "Notes"]
-    wi = _signal_index(run, "Weight")
     if wi is not None:
         lines.append(f"  Weight (%) = 100 x Weight / first recorded weight ({run.rows[0][wi]:.6g} mg).")
-    if "dtg_time" in opts.columns or "dtg_temp" in opts.columns:
+        if "mass_loss" in opts.columns:
+            lines.append("  Mass loss (%) = 100 - Weight (%).")
+        if "weight_pct_dry" in opts.columns and ti is not None:
+            wd = _weight_at_temperature([r[ti] for r in run.rows], [r[wi] for r in run.rows], opts.dry_temp_c)
+            if wd is not None:
+                lines.append(
+                    f"  Weight dry basis (%) = 100 x Weight / weight when the sample first reached "
+                    f"{opts.dry_temp_c:g} °C ({wd:.6g} mg)."
+                )
+    if any(k in opts.columns for k in SMOOTHED_KEYS):
         lines.append(
-            f"  Derivative weight: least-squares slope of Weight (%) over a {opts.dtg_window_s:g} s window."
+            f"  Heating rate and derivatives: least-squares slope over a {opts.dtg_window_s:g} s window."
         )
         if "dtg_temp" in opts.columns:
             lines.append(

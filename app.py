@@ -15,6 +15,7 @@ from converter import (
     APP_NAME,
     APP_VERSION,
     COLUMNS,
+    SMOOTHED_KEYS,
     UA_POINT_TARGET,
     ConversionError,
     ExportOptions,
@@ -100,8 +101,8 @@ class App(_BaseTk):
     def __init__(self) -> None:
         super().__init__()
         self.title(f"{APP_NAME}  v{APP_VERSION}")
-        self.geometry("1060x660")
-        self.minsize(980, 580)
+        self.geometry("1080x720")
+        self.minsize(1000, 660)
         self.files: dict[str, dict] = {}  # tree item id -> {"path", "run", "error"}
         self.queue: queue.Queue = queue.Queue()
         self.busy = False
@@ -190,21 +191,29 @@ class App(_BaseTk):
         rawbox.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         calcbox = ttk.LabelFrame(mid, text=" 3. Columns to calculate ", style="Section.TLabelframe", padding=8)
         calcbox.grid(row=0, column=1, sticky="nsew", padx=(0, 8))
+        self.window_var = tk.StringVar(value="10")
+        self.dry_var = tk.StringVar(value="150")
+        self.sub_rows: dict[str, tuple] = {}
+
+        def sub_row(parent, label, var, lo, hi, unit):
+            row = ttk.Frame(parent)
+            row.pack(anchor="w", padx=(22, 0), pady=(0, 3))
+            lab = ttk.Label(row, text=label)
+            lab.pack(side="left")
+            spin = ttk.Spinbox(row, from_=lo, to=hi, increment=1, width=6, textvariable=var)
+            spin.pack(side="left", padx=4)
+            un = ttk.Label(row, text=unit)
+            un.pack(side="left")
+            return (lab, spin, un)
+
         for box, group in ((rawbox, "raw"), (calcbox, "calc")):
             for c in (c for c in COLUMNS if c.group == group):
                 v = tk.BooleanVar(value=c.default)
                 self.col_vars[c.key] = v
-                ttk.Checkbutton(box, text=c.label, variable=v, command=self._dtg_state).pack(anchor="w", pady=1)
-
-        self.window_var = tk.StringVar(value="10")
-        wrow = ttk.Frame(calcbox)
-        wrow.pack(anchor="w", padx=(22, 0), pady=(2, 0))
-        self.window_label = ttk.Label(wrow, text="Smoothing window:")
-        self.window_label.pack(side="left")
-        self.window_spin = ttk.Spinbox(wrow, from_=1, to=120, increment=1, width=5, textvariable=self.window_var)
-        self.window_spin.pack(side="left", padx=4)
-        self.window_unit = ttk.Label(wrow, text="s")
-        self.window_unit.pack(side="left")
+                ttk.Checkbutton(box, text=c.label, variable=v, command=self._sub_state).pack(anchor="w", pady=1)
+                if c.key == "weight_pct_dry":
+                    self.sub_rows["dry"] = sub_row(box, "Reference temperature:", self.dry_var, 0, 1000, "°C")
+        self.sub_rows["window"] = sub_row(calcbox, "Smoothing window:", self.window_var, 1, 120, "s")
 
         opt = ttk.LabelFrame(mid, text=" 4. Options ", style="Section.TLabelframe", padding=8)
         opt.grid(row=0, column=2, sticky="nsew")
@@ -244,13 +253,17 @@ class App(_BaseTk):
         self.convert_btn.grid(row=0, column=2)
 
         self._out_mode()
-        self._dtg_state()
+        self._sub_state()
 
-    def _dtg_state(self) -> None:
-        on = self.col_vars["dtg_time"].get() or self.col_vars["dtg_temp"].get()
-        self.window_spin.configure(state="normal" if on else "disabled")
-        for w in (self.window_label, self.window_unit):
-            w.configure(state="normal" if on else "disabled")
+    def _sub_state(self) -> None:
+        """Grey out the extra inputs unless a column that uses them is ticked."""
+        uses = {
+            "dry": self.col_vars["weight_pct_dry"].get(),
+            "window": any(self.col_vars[k].get() for k in SMOOTHED_KEYS),
+        }
+        for name, on in uses.items():
+            for w in self.sub_rows[name]:
+                w.configure(state="normal" if on else "disabled")
 
     # ---------- errors ----------
     def report_callback_exception(self, exc, val, tb) -> None:
@@ -371,8 +384,17 @@ class App(_BaseTk):
         if not cols:
             messagebox.showwarning(APP_NAME, "Select at least one column to export.")
             return None
+        dry = 150.0
+        if "weight_pct_dry" in cols:
+            try:
+                dry = float(self.dry_var.get())
+                if not 0 <= dry <= 1000:
+                    raise ValueError
+            except ValueError:
+                messagebox.showwarning(APP_NAME, "Dry-basis reference temperature must be a number (0–1000 °C).")
+                return None
         window = 10.0
-        if "dtg_time" in cols or "dtg_temp" in cols:
+        if any(k in cols for k in SMOOTHED_KEYS):
             try:
                 window = float(self.window_var.get())
                 if not 0 < window <= 600:
@@ -394,6 +416,7 @@ class App(_BaseTk):
             reduce_like_ua=self.reduce_var.get(),
             write_info=self.info_var.get(),
             dtg_window_s=window,
+            dry_temp_c=dry,
             output_dir=outdir,
         )
 
