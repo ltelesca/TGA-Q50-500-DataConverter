@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import queue
 import sys
@@ -92,6 +91,7 @@ DESKTOP_MSG = (
 
 
 def settings_path() -> Path:
+    """Location of error.log (no settings are stored)."""
     base = os.environ.get("APPDATA") or os.path.join(Path.home(), ".config")
     return Path(base) / "TGA-Q500-DataConverter" / "settings.json"
 
@@ -109,7 +109,6 @@ class App(_BaseTk):
         self._style()
         self._build()
         self._enable_drop()
-        self._load_settings()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ---------- layout ----------
@@ -442,7 +441,6 @@ class App(_BaseTk):
             jobs = [
                 (iid, v) for iid, v in jobs if output_paths(v["path"], opts.output_dir)[0].name not in existing
             ]
-        self._save_settings()
         self.busy = True
         self.n_failed = 0
         self.convert_btn.configure(state="disabled")
@@ -493,26 +491,7 @@ class App(_BaseTk):
             pass
         self.after(100, self._poll)
 
-    # ---------- settings ----------
-    # Shared instrument PC: every session starts from the default columns/options.
-    # Only the last custom output folder is remembered, to save browsing.
-    def _load_settings(self) -> None:
-        try:
-            s = json.loads(settings_path().read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return
-        self.outdir_var.set(s.get("outdir", ""))
-
-    def _save_settings(self) -> None:
-        try:
-            p = settings_path()
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps({"outdir": self.outdir_var.get()}, indent=2), encoding="utf-8")
-        except OSError:
-            pass
-
     def _on_close(self) -> None:
-        self._save_settings()
         self.destroy()
 
 
