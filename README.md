@@ -2,80 +2,174 @@
 
 Small Windows app that converts TA Instruments TGA Q500 raw data files
 (`.001`, `.002`, … `.999`) into CSV files, without going through
-Universal Analysis.
+Universal Analysis (UA).
+
+Current version: **0.3.0**
+
+## Getting the app
+
+Download the latest `TGA-Q500-DataConverter.exe` from the **Actions** tab
+of this repository (latest successful run → *Artifacts*). It is a single
+file; no installation and no Python needed.
+
+The first time it runs, Windows may show *"Windows protected your PC"*
+(the .exe is not digitally signed): click **More info → Run anyway**.
 
 ## Using it
 
-1. Run `TGA-Q500-DataConverter.exe` (no installation needed).
-   The first time, Windows may show *"Windows protected your PC"*:
-   click **More info → Run anyway**.
-2. **Add files…** or **Add folder…** (picks up every `.001`–`.999` file in it).
-3. Tick the columns you want and set the options.
-4. **Convert to CSV.**
+1. **Add files** – *Add files…*, *Add folder…* (picks up every
+   `.001`–`.999` file in it), or drag files/folders onto the file list.
+   Files with any run number (`.001`, `.002`, `.003`, …) are treated the
+   same; aborted or short runs convert normally.
+2. **Section 2 – Columns to export:** signals recorded by the instrument.
+3. **Section 3 – Columns to calculate:** derived columns (see below).
+4. **Section 4 – Options:** data reduction, info file, output folder.
+5. **Convert to CSV.**
 
-For each run you get two files next to the original (or in the folder you choose):
+The file list shows sample name, run date, number of points and duration
+for each file. The Status column turns **green** when a file is converted
+and **red** if it cannot be read or the conversion fails (the reason is
+shown).
+
+### Defaults
+
+The app remembers nothing between sessions (it runs on a shared
+instrument PC). Every time it opens:
+
+- Columns to export: **Time, Temperature, Weight** on; purge flows and gas off
+- Columns to calculate: **Weight (%)** on; everything else off
+- Reduction **off**, info file **on**, output to **the same folder as each file**
+
+### Output files
+
+For each run, two files are written next to the original (or in the
+folder chosen under *This folder*):
 
 | File | Contents |
 |---|---|
-| `sample_001.csv` | Plain table, one header row with column names and units |
-| `sample_001_info.txt` | Sample, mass, operator, date, instrument, pan/gases, method steps, gas-switch times, point count, notes on calculations |
+| `sample_001.csv` | Plain table, one header row with column names and units, comma-separated, UTF-8 (opens directly in Excel) |
+| `sample_001_info.txt` | Sample, mass, operator, date, instrument, pan/gases, method steps, gas-switch times, point count, results, and notes on how each calculated column was made |
 
-The run number from the extension is kept in the name, so `sample.001`
-and `sample.002` never overwrite each other. If an output file already
-exists, the app asks before overwriting.
+- The run number is kept in the name, so `sample.001` and `sample.002`
+  never overwrite each other.
+- If an output file already exists, the app asks: overwrite, skip, or cancel.
+- **Saving directly on the Desktop is blocked** (normal, OneDrive or
+  Public Desktop), both when *This folder* is the Desktop and when the
+  source files sit on the Desktop with *Same folder as each file*.
+  Subfolders of the Desktop are allowed.
 
 ## Columns
 
-**Columns to export** (recorded by the instrument)
+### Columns to export (recorded by the instrument)
 
 | Column | Source |
 |---|---|
 | Time (min), Temperature (°C), Weight (mg) | Raw signals |
-| Balance / Sample purge flow (mL/min) | Raw signals |
-| Gas | Active gas (1 or 2), from the gas-switch records in the file |
+| Balance / Sample Purge Flow (mL/min) | Raw signals |
+| Gas | Active gas (1 or 2), from the gas-switch records stored in the file |
 
-**Columns to calculate**
+### Columns to calculate
 
 | Column | Definition |
 |---|---|
 | Weight (%) | 100 × Weight / first recorded weight |
-| Weight dry basis (%) | 100 × Weight / weight when the sample first reaches the reference temperature (default 150 °C) |
+| Weight dry basis (%) | 100 × Weight / weight when the sample **first** reaches the reference temperature (default 150 °C; input enabled only when this column is ticked) |
 | Mass Loss (%) | 100 − Weight (%) |
-| Heating Rate (°C/min) | Least-squares slope of Temperature over the smoothing window |
-| Deriv. Weight (%/min), (mg/min) | Least-squares slope of Weight over a centred window (default 10 s) |
-| Deriv. Weight (%/°C) | (%/min) ÷ heating rate; blank where heating rate < 0.1 °C/min (isothermal) |
+| Heating Rate (°C/min) | Slope of Temperature vs time |
+| Deriv. Weight (%/min) and (mg/min) | Slope of Weight vs time |
+| Deriv. Weight (%/°C) | (%/min) ÷ heating rate; blank where the heating rate is below 0.1 °C/min (isothermal segments) |
 
-The info file also lists **results** computed from all recorded points:
-initial/final weight, final residue (%), total mass loss, and the
-temperatures at 1 %, 5 % and 10 % mass loss.
+In the CSV, recorded signals come first, then calculated columns.
+
+**Smoothing window** (heating rate and derivatives; default 10 s,
+enabled only when one of those columns is ticked): each slope is a
+least-squares straight-line fit over a window centred on the point, so
+peaks are not shifted, only broadened as the window grows. What matters
+is the temperature span, heating rate × window: 10 s is 0.3 °C at
+2 °C/min but 8 °C at 50 °C/min. For fast ramps with sharp steps,
+2–4 s keeps peaks sharper.
+
+**Dry basis notes:** one reference weight is used for the whole run, so
+cycles stay on the same scale. It is taken at the instant the reference
+temperature is crossed, not after a hold; on fast ramps (e.g. 50 °C/min)
+some samples are not completely dry at 150 °C (0.03–0.86 % further loss
+before decomposition in our test runs). A higher reference temperature,
+still below any decomposition, reduces this.
+
+### Results in the info file
+
+Computed from every recorded point, relative to the first recorded weight:
+initial and final weight, final residue (%), total mass loss (mg and %),
+and the temperatures at 1 %, 5 % and 10 % mass loss. "T at x % loss" is
+the first time the weight drops below 100 − x %; for runs with
+isothermal holds, cooling or gas cycling, read it with care.
 
 ## Full data vs. Universal Analysis
 
-By default **every recorded point** is exported. Universal Analysis caps
-its text export at roughly 19,000 points: runs longer than that (about
-2.7 h at 0.5 s sampling) are averaged down. The optional
-*"Reduce long runs to ~19,000 points"* checkbox mimics this for runs over
-20,000 points by averaging consecutive points, restarting at each gas
-switch. It is a close approximation of UA's export (differences below
-0.02 % of sample mass in testing), not a bit-identical copy.
+By default **every recorded point** is exported. UA caps its text export
+at roughly 19,000 points: runs longer than that (about 2.7 h at 0.5 s
+sampling) are averaged down. Example: a 438-min run has 52,603 points;
+UA exported 18,979.
+
+The optional *"Reduce long runs to ~19,000 points (UA style)"* checkbox
+mimics this for runs over 20,000 points, averaging consecutive points
+and restarting at each gas switch. It is a close approximation of UA's
+export (differences below 0.02 % of sample mass in testing), not a
+bit-identical copy.
+
+## Validation
+
+Tested on 50 raw files from the lab's Q500 (LaNiO, CaCO₃ cycling, LiCl /
+MgCl isotherms, NMC/LCO/LFP, blanks, aborted runs, `.002`–`.004` re-runs):
+
+- all 50 parse and convert;
+- the 32 runs short enough for UA to export in full match UA's text export
+  value for value (within UA's print rounding, ~1 part in 10⁶).
+
+## Troubleshooting
+
+Unexpected errors are shown in a message box and appended to
+`%APPDATA%\TGA-Q500-DataConverter\error.log`. Send that file along
+with the .001 file that caused it.
 
 ## File format notes
 
-Reverse-engineered from Q Series files and validated against UA text
-exports (32 files identical to print precision):
+Reverse-engineered from Q Series files:
 
-1. UTF-16-LE text header (BOM `FF FE`), `Key value` lines.
+1. UTF-16-LE text header (BOM `FF FE`), `Key value` lines (Sample, Size,
+   Nsig, Sig1…SigN, OrgMethod, Date, …).
 2. Form feed `0C 00`.
 3. One byte: number of signals N.
 4. Records of N little-endian float32 values in header `SigN` order.
-   First value `-3` = gas switch (second value = gas number);
-   `-100` = end of data (trailer follows and is ignored).
+   Special records: first value `-3` = gas switch (second value = new gas
+   number); `-100` = end of data (a short trailer follows and is ignored).
 
-## Building
+## Code
 
-GitHub Actions builds the `.exe` on every push to `main`
-(**Actions** tab → latest run → *Artifacts*). Pushing a tag such as
-`v0.1.0` also publishes it on the **Releases** page.
+| File | Role |
+|---|---|
+| `tga_reader.py` | Reads `.001`–`.999` files |
+| `converter.py` | Columns, calculations, reduction, CSV and info file |
+| `app.py` | Window (Tkinter, drag-and-drop via tkinterdnd2) |
+| `tests/smoke_gui.py` | Check run on every build |
+| `.github/workflows/build-windows.yml` | Builds the .exe on GitHub's Windows machine |
 
-Locally (Windows, Python 3.10+): `pip install pyinstaller` then
-`pyinstaller --onefile --windowed --name TGA-Q500-DataConverter app.py`.
+GitHub Actions builds the `.exe` on every push to `main`. Pushing a tag
+such as `v0.3.0` also publishes it on the **Releases** page.
+
+To build locally (Windows, Python 3.10+):
+
+```
+pip install pyinstaller tkinterdnd2
+pyinstaller --onefile --windowed --name TGA-Q500-DataConverter --collect-all tkinterdnd2 app.py
+```
+
+## Version history
+
+| Version | Changes |
+|---|---|
+| 0.3.0 | Weight dry basis, mass loss, heating rate, DTG in mg/min; results section in info file |
+| 0.2.1 | Nothing remembered between sessions |
+| 0.2.0 | Separate "export" and "calculate" sections; Desktop guard; smoothing window greyed out unless used |
+| 0.1.1 | Fixed buttons that did nothing on Windows; drag-and-drop; error messages and error.log |
+| 0.1.0 | First version |
