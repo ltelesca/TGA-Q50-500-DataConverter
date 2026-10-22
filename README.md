@@ -4,13 +4,30 @@ Small Windows app that converts TA Instruments TGA Q500 raw data files
 (`.001`, `.002`, … `.999`) into CSV files, without going through
 Universal Analysis (UA).
 
-Current version: **0.5.0**
+Current version: **0.5.1**
 
 ## Getting the app
 
-Download the latest `TGA-Q500-DataConverter.exe` from the **Actions** tab
-of this repository (latest successful run → *Artifacts*). It is a single
-file; no installation and no Python needed.
+Download from the **Actions** tab of this repository (latest successful
+run → *Artifacts*). Each is a single .exe; no installation and no Python
+needed.
+
+| Download | For |
+|---|---|
+| `TGA-Q500-DataConverter` | Windows 10 and 11 |
+| `TGA-Q500-DataConverter-Win7-64bit` | Windows 7, 64-bit |
+| `TGA-Q500-DataConverter-Win7-32bit` | Windows 7, 32-bit |
+
+To check which Windows 7 version a PC has: **Control Panel → System →
+System type**.
+
+The Windows 7 versions are built with Python 3.8, the last Python that
+runs on Windows 7. They need **Service Pack 1** and the Windows
+**Universal C Runtime** update (KB2999226), which a Windows 7 PC that
+has received Windows Updates already has. The Windows 10/11 version does
+**not** run on Windows 7 (typical error: missing
+`api-ms-win-core-path-l1-1-0.dll`). All three are built from the same
+code and produce identical CSV and info files.
 
 The first time it runs, Windows may show *"Windows protected your PC"*
 (the .exe is not digitally signed): click **More info → Run anyway**.
@@ -222,8 +239,10 @@ Reverse-engineered from Q Series files:
 | `tests/smoke_gui.py` | Checks run on every build (window, options, run type, cycle detection) |
 | `.github/workflows/build-windows.yml` | Builds the .exe on GitHub's Windows machine |
 
-GitHub Actions builds the `.exe` on every push to `main`. Pushing a tag
-such as `v0.5.0` also publishes it on the **Releases** page.
+GitHub Actions builds the three `.exe` files on every push to `main`
+(Windows 10/11 with Python 3.12; Windows 7 64-bit and 32-bit with
+Python 3.8 and PyInstaller 5.13.2) and runs the checks in each. Pushing a
+tag such as `v0.5.1` also publishes them on the **Releases** page.
 
 To build locally (Windows, Python 3.10+):
 
@@ -236,6 +255,7 @@ pyinstaller --onefile --windowed --name TGA-Q500-DataConverter --collect-all tki
 
 | Version | Changes |
 |---|---|
+| 0.5.1 | Windows 7 builds (32- and 64-bit); Python 3.8 compatibility fix |
 | 0.5.0 | Raw files recognised by content (names with dots / no extension); derivative sign as in UA (positive = loss) and %/°C computed against temperature; cycles only where the method programmes a cool-down (fixes Hi-Res runs); unique output names within a batch; faster derivatives |
 | 0.4.0 | Run type per file (auto-detected ramp / cycling, double-click to change, all-files selector); per-cycle results; new section 4 "Info file" (residue, T at 1/5/10/50 % or custom list); Options becomes section 5 |
 | 0.3.0 | Weight dry basis, mass loss, heating rate, DTG in mg/min; results section in info file |
