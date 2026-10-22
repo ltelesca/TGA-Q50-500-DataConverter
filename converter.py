@@ -21,7 +21,7 @@ from analysis import (
 from tga_reader import TGARun, has_run_number
 
 APP_NAME = "TGA Q500 Data Converter"
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.5.1"
 
 UA_POINT_TARGET = 19000
 UA_REDUCE_ABOVE = 20000  # UA leaves runs of up to ~19,800 points untouched; 21,450 were reduced
@@ -476,7 +476,9 @@ def export_run(
         for row in table:
             fh.write(",".join(_fmt(v) for v in row) + "\r\n")
     if opts.write_info:
-        info_path.write_text(build_info(run, opts, len(table), headers, warnings, run_type, run_type_source, cycles), encoding="utf-8-sig", newline="")
+        text = build_info(run, opts, len(table), headers, warnings, run_type, run_type_source, cycles)
+        with open(info_path, "w", encoding="utf-8-sig", newline="") as fh:  # Path.write_text(newline=) needs 3.10
+            fh.write(text)
     else:
         info_path = None
     return ExportResult(csv_path, info_path, len(table), len(run.rows), warnings)

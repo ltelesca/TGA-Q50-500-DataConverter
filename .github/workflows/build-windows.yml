@@ -11,34 +11,55 @@ permissions:
 
 jobs:
   build:
+    name: ${{ matrix.exe }}
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows 10 / 11 (64-bit)
+          - exe: TGA-Q500-DataConverter
+            python: "3.12"
+            arch: x64
+            pyinstaller: pyinstaller
+          # Windows 7 SP1: Python 3.8 is the last Python that runs on Windows 7
+          - exe: TGA-Q500-DataConverter-Win7-64bit
+            python: "3.8"
+            arch: x64
+            pyinstaller: pyinstaller==5.13.2
+          - exe: TGA-Q500-DataConverter-Win7-32bit
+            python: "3.8"
+            arch: x86
+            pyinstaller: pyinstaller==5.13.2
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
+          architecture: ${{ matrix.arch }}
 
       - name: Install build tools
-        run: python -m pip install --upgrade pip pyinstaller tkinterdnd2
+        run: python -m pip install --upgrade pip "${{ matrix.pyinstaller }}" tkinterdnd2
 
       - name: Build single-file .exe
         run: >
           pyinstaller --noconfirm --onefile --windowed
-          --name TGA-Q500-DataConverter
+          --name ${{ matrix.exe }}
           --collect-all tkinterdnd2
           app.py
 
-      - name: Smoke test (window builds, drag-and-drop loads, options collect)
+      - name: Smoke test (window builds, drag-and-drop loads, options, run type, cycles)
         run: python tests/smoke_gui.py
 
       - uses: actions/upload-artifact@v4
         with:
-          name: TGA-Q500-DataConverter
-          path: dist/TGA-Q500-DataConverter.exe
+          name: ${{ matrix.exe }}
+          path: dist/${{ matrix.exe }}.exe
 
       - name: Publish release (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/TGA-Q500-DataConverter.exe
+          files: dist/${{ matrix.exe }}.exe
