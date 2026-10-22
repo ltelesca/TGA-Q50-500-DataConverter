@@ -11,6 +11,7 @@ import traceback
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from analysis import CYCLING, RAMP, STANDARD_LOSS_LEVELS, parse_loss_levels
 from converter import (
     APP_NAME,
     APP_VERSION,
@@ -19,6 +20,7 @@ from converter import (
     UA_POINT_TARGET,
     ConversionError,
     ExportOptions,
+    cycles_for,
     export_run,
     output_paths,
 )
@@ -98,11 +100,13 @@ def settings_path() -> Path:
 
 
 class App(_BaseTk):
+    MODES = ("Auto-detect", "Treat all as ramp", "Treat all as cycling")
+
     def __init__(self) -> None:
         super().__init__()
         self.title(f"{APP_NAME}  v{APP_VERSION}")
-        self.geometry("1080x720")
-        self.minsize(1000, 660)
+        self.geometry("1120x780")
+        self.minsize(1060, 740)
         self.files: dict[str, dict] = {}  # tree item id -> {"path", "run", "error"}
         self.queue: queue.Queue = queue.Queue()
         self.busy = False
@@ -146,20 +150,22 @@ class App(_BaseTk):
         files.columnconfigure(0, weight=1)
         files.rowconfigure(0, weight=1)
 
-        cols = ("file", "sample", "date", "points", "duration", "status")
+        cols = ("file", "sample", "date", "points", "duration", "runtype", "status")
         tree = ttk.Treeview(files, columns=cols, show="headings", selectmode="extended")
         for c, text, w, anchor in [
-            ("file", "File", 240, "w"),
+            ("file", "File", 230, "w"),
             ("sample", "Sample", 140, "w"),
             ("date", "Run date", 90, "w"),
             ("points", "Points", 65, "e"),
             ("duration", "Duration", 78, "e"),
-            ("status", "Status", 260, "w"),
+            ("runtype", "Run type", 140, "w"),
+            ("status", "Status", 200, "w"),
         ]:
             tree.heading(c, text=text, anchor=anchor)
             tree.column(c, width=w, anchor=anchor, stretch=(c in ("file", "status")))
         tree.tag_configure("error", foreground="#b00020")
         tree.tag_configure("done", foreground="#1b7f3b")
+        tree.bind("<Double-1>", self._on_double_click)
         tree.grid(row=0, column=0, sticky="nsew")
         sb = ttk.Scrollbar(files, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=sb.set)
@@ -175,6 +181,15 @@ class App(_BaseTk):
             ("Clear list", self.clear),
         ]:
             ttk.Button(btns, text=text, command=cmd, width=14).pack(fill="x", pady=2)
+        ttk.Separator(btns).pack(fill="x", pady=(10, 6))
+        ttk.Label(btns, text="Run type:").pack(anchor="w")
+        self.mode_var = tk.StringVar(value=self.MODES[0])
+        mode = ttk.Combobox(btns, textvariable=self.mode_var, values=self.MODES, state="readonly", width=16)
+        mode.pack(fill="x", pady=2)
+        mode.bind("<<ComboboxSelected>>", lambda e: self._refresh_run_types())
+        ttk.Label(
+            btns, text="Double-click a Run type\ncell to change one file.", style="Sub.TLabel", justify="left"
+        ).pack(anchor="w", pady=(2, 0))
         self.empty_hint = ttk.Label(
             files, text="Add .001 / .002 / … files to get started.", style="Sub.TLabel"
         )
@@ -215,31 +230,66 @@ class App(_BaseTk):
                     self.sub_rows["dry"] = sub_row(box, "Reference temperature:", self.dry_var, 0, 1000, "°C")
         self.sub_rows["window"] = sub_row(calcbox, "Smoothing window:", self.window_var, 1, 120, "s")
 
-        opt = ttk.LabelFrame(mid, text=" 4. Options ", style="Section.TLabelframe", padding=8)
-        opt.grid(row=0, column=2, sticky="nsew")
+        right = ttk.Frame(mid)
+        right.grid(row=0, column=2, sticky="nsew")
+        right.columnconfigure(0, weight=1)
+
+        info = ttk.LabelFrame(right, text=" 4. Info file ", style="Section.TLabelframe", padding=8)
+        info.grid(row=0, column=0, sticky="ew")
+        self.info_var = tk.BooleanVar(value=True)
+        self.residue_var = tk.BooleanVar(value=True)
+        self.tloss_var = tk.BooleanVar(value=True)
+        self.tloss_mode = tk.StringVar(value="standard")
+        self.tloss_custom = tk.StringVar(value="")
+        std = ", ".join(f"{x:g}" for x in STANDARD_LOSS_LEVELS)
+        ttk.Checkbutton(
+            info, text="Write info file (sample, method, gas switches…)", variable=self.info_var,
+            command=self._info_state,
+        ).grid(row=0, column=0, columnspan=3, sticky="w")
+        self.info_widgets = []
+        w = ttk.Checkbutton(info, text="Final residue and mass loss", variable=self.residue_var)
+        w.grid(row=1, column=0, columnspan=3, sticky="w", padx=(22, 0))
+        self.info_widgets.append(w)
+        w = ttk.Checkbutton(
+            info, text="Temperature at mass loss:", variable=self.tloss_var, command=self._info_state
+        )
+        w.grid(row=2, column=0, columnspan=3, sticky="w", padx=(22, 0))
+        self.info_widgets.append(w)
+        self.tloss_std_rb = ttk.Radiobutton(
+            info, text=f"{std} %", value="standard", variable=self.tloss_mode, command=self._info_state
+        )
+        self.tloss_std_rb.grid(row=3, column=0, columnspan=3, sticky="w", padx=(44, 0))
+        self.tloss_cus_rb = ttk.Radiobutton(
+            info, text="Custom:", value="custom", variable=self.tloss_mode, command=self._info_state
+        )
+        self.tloss_cus_rb.grid(row=4, column=0, sticky="w", padx=(44, 0))
+        self.tloss_entry = ttk.Entry(info, textvariable=self.tloss_custom, width=16)
+        self.tloss_entry.grid(row=4, column=1, sticky="w", padx=4)
+        self.tloss_hint = ttk.Label(info, text="% (e.g. 2, 5, 20)", style="Sub.TLabel")
+        self.tloss_hint.grid(row=4, column=2, sticky="w")
+
+        opt = ttk.LabelFrame(right, text=" 5. Options ", style="Section.TLabelframe", padding=8)
+        opt.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+        right.rowconfigure(1, weight=1)
         opt.columnconfigure(1, weight=1)
         self.reduce_var = tk.BooleanVar(value=False)
-        self.info_var = tk.BooleanVar(value=True)
         self.outmode_var = tk.StringVar(value="same")
         self.outdir_var = tk.StringVar(value="")
 
         ttk.Checkbutton(
             opt, text=f"Reduce long runs to ~{UA_POINT_TARGET:,} points (UA style)", variable=self.reduce_var
         ).grid(row=0, column=0, columnspan=3, sticky="w")
-        ttk.Checkbutton(opt, text="Write info file (sample, method, gas switches…)", variable=self.info_var).grid(
-            row=1, column=0, columnspan=3, sticky="w"
-        )
-        ttk.Label(opt, text="Save CSV files to:").grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ttk.Label(opt, text="Save CSV files to:").grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
         ttk.Radiobutton(
             opt, text="Same folder as each file", value="same", variable=self.outmode_var, command=self._out_mode
-        ).grid(row=3, column=0, columnspan=3, sticky="w")
+        ).grid(row=2, column=0, columnspan=3, sticky="w")
         ttk.Radiobutton(opt, text="This folder:", value="custom", variable=self.outmode_var, command=self._out_mode).grid(
-            row=4, column=0, sticky="w"
+            row=3, column=0, sticky="w"
         )
         self.outdir_entry = ttk.Entry(opt, textvariable=self.outdir_var)
-        self.outdir_entry.grid(row=4, column=1, sticky="ew", padx=4)
+        self.outdir_entry.grid(row=3, column=1, sticky="ew", padx=4)
         self.browse_btn = ttk.Button(opt, text="Browse…", command=self.pick_outdir)
-        self.browse_btn.grid(row=4, column=2)
+        self.browse_btn.grid(row=3, column=2)
 
         # --- bottom bar ---
         bottom = ttk.Frame(root)
@@ -254,6 +304,63 @@ class App(_BaseTk):
 
         self._out_mode()
         self._sub_state()
+        self._info_state()
+
+    def _info_state(self) -> None:
+        on = self.info_var.get()
+        for w in self.info_widgets:
+            w.configure(state="normal" if on else "disabled")
+        t_on = on and self.tloss_var.get()
+        for w in (self.tloss_std_rb, self.tloss_cus_rb):
+            w.configure(state="normal" if t_on else "disabled")
+        c_on = t_on and self.tloss_mode.get() == "custom"
+        self.tloss_entry.configure(state="normal" if c_on else "disabled")
+        self.tloss_hint.configure(state="normal" if c_on else "disabled")
+
+    # ---------- run type ----------
+    def _effective_type(self, info: dict) -> tuple[str, str]:
+        mode = self.mode_var.get()
+        if mode == self.MODES[1]:
+            return RAMP, "set for all files"
+        if mode == self.MODES[2]:
+            return CYCLING, "set for all files"
+        if info.get("override"):
+            return info["override"], "set by user for this file"
+        return info["detected"], "detected automatically"
+
+    def _show_run_type(self, iid: str) -> None:
+        info = self.files[iid]
+        if not info["run"]:
+            return
+        rtype, source = self._effective_type(info)
+        label = "Ramp" if rtype == RAMP else f"Cycling ({len(info['cycles'])})"
+        if source == "set by user for this file":
+            label += " – manual"
+        self.tree.set(iid, "runtype", label)
+
+    def _refresh_run_types(self) -> None:
+        for iid in self.files:
+            self._show_run_type(iid)
+
+    def _on_double_click(self, event) -> None:
+        iid = self.tree.identify_row(event.y)
+        col = self.tree.identify_column(event.x)
+        if not iid or col != f"#{self.tree['columns'].index('runtype') + 1}":
+            return
+        info = self.files.get(iid)
+        if not info or not info["run"]:
+            return
+        if self.mode_var.get() != self.MODES[0]:
+            messagebox.showinfo(
+                APP_NAME,
+                f"Run type is set to '{self.mode_var.get()}'.\n\n"
+                "Choose 'Auto-detect' to change the run type of single files.",
+            )
+            return
+        current, _ = self._effective_type(info)
+        new = CYCLING if current == RAMP else RAMP
+        info["override"] = None if new == info["detected"] else new
+        self._show_run_type(iid)
 
     def _sub_state(self) -> None:
         """Grey out the extra inputs unless a column that uses them is ticked."""
@@ -327,22 +434,25 @@ class App(_BaseTk):
             if str(p) in known:
                 continue
             known.add(str(p))
-            info = {"path": p, "run": None, "error": None}
+            info = {"path": p, "run": None, "error": None, "cycles": [], "detected": RAMP, "override": None}
             try:
                 if not is_raw_file(p.name):
                     raise TGAFormatError("not a .001 / .002 / … file")
                 run = read_tga(p)
                 info["run"] = run
+                info["cycles"] = cycles_for(run)
+                info["detected"] = CYCLING if len(info["cycles"]) > 1 else RAMP
                 dur = run.rows[-1][0] - run.rows[0][0]
                 status = "Ready" if run.complete else "Ready (run incomplete)"
-                vals = (p.name, run.get("Sample"), run.get("Date"), f"{len(run.rows):,}", f"{dur:.1f} min", status)
+                vals = (p.name, run.get("Sample"), run.get("Date"), f"{len(run.rows):,}", f"{dur:.1f} min", "", status)
                 tags = ()
             except (TGAFormatError, OSError, ValueError) as e:
                 info["error"] = str(e)
-                vals = (p.name, "", "", "", "", f"Cannot read: {e}")
+                vals = (p.name, "", "", "", "", "", f"Cannot read: {e}")
                 tags = ("error",)
             iid = self.tree.insert("", "end", values=vals, tags=tags)
             self.files[iid] = info
+            self._show_run_type(iid)
         self._update_hint()
 
     def remove_selected(self) -> None:
@@ -411,8 +521,22 @@ class App(_BaseTk):
             if is_desktop(outdir):
                 messagebox.showwarning(APP_NAME, DESKTOP_MSG)
                 return None
+        levels = list(STANDARD_LOSS_LEVELS)
+        if self.info_var.get() and self.tloss_var.get() and self.tloss_mode.get() == "custom":
+            try:
+                levels = parse_loss_levels(self.tloss_custom.get())
+            except ValueError:
+                messagebox.showwarning(
+                    APP_NAME,
+                    "Custom mass-loss values must be numbers between 0 and 100, separated by commas "
+                    "(for example: 2, 5, 20).",
+                )
+                return None
         return ExportOptions(
             columns=cols,
+            info_residue=self.residue_var.get(),
+            info_tloss=self.tloss_var.get(),
+            tloss_levels=levels,
             reduce_like_ua=self.reduce_var.get(),
             write_info=self.info_var.get(),
             dtg_window_s=window,
@@ -470,14 +594,15 @@ class App(_BaseTk):
         self.progress.configure(maximum=len(jobs), value=0)
         for iid, _ in jobs:
             self.tree.set(iid, "status", "Waiting…")
+        jobs = [(iid, v, *self._effective_type(v)) for iid, v in jobs]
         threading.Thread(target=self._worker, args=(jobs, opts), daemon=True).start()
         self.after(100, self._poll)
 
     def _worker(self, jobs, opts: ExportOptions) -> None:
-        for iid, v in jobs:
+        for iid, v, rtype, source in jobs:
             self.queue.put(("start", iid, None))
             try:
-                res = export_run(v["run"], opts)
+                res = export_run(v["run"], opts, rtype, source, v["cycles"])
                 note = "Done"
                 if res.points_written != res.points_raw:
                     note += f" (reduced to {res.points_written:,} pts)"

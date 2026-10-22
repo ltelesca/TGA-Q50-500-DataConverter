@@ -7,10 +7,20 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from analysis import (
+    COOL_DROP_C,
+    CYCLING,
+    RAMP,
+    REHEAT_RISE_C,
+    STANDARD_LOSS_LEVELS,
+    detect_cycles,
+    fmt_level,
+    segment_result,
+)
 from tga_reader import TGARun
 
 APP_NAME = "TGA Q500 Data Converter"
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.4.0"
 
 UA_POINT_TARGET = 19000
 UA_REDUCE_ABOVE = 20000  # UA leaves runs of up to ~19,800 points untouched; 21,450 were reduced
@@ -63,6 +73,9 @@ class ExportOptions:
     write_info: bool = True
     dtg_window_s: float = 10.0
     dry_temp_c: float = 150.0
+    info_residue: bool = True
+    info_tloss: bool = True
+    tloss_levels: list[float] = field(default_factory=lambda: list(STANDARD_LOSS_LEVELS))
     output_dir: Path | None = None  # None = next to the source file
 
 
@@ -121,16 +134,6 @@ def _weight_at_temperature(T: list[float], W: list[float], target: float) -> flo
             t0, t1 = T[i - 1], T[i]
             f = (target - t0) / (t1 - t0) if t1 != t0 else 0.0
             return W[i - 1] + f * (W[i] - W[i - 1])
-    return None
-
-
-def _temperature_at_loss(T: list[float], pct: list[float], loss: float) -> float | None:
-    """Temperature where Weight (%) first drops to 100 - loss (linear interpolation)."""
-    level = 100.0 - loss
-    for i in range(1, len(pct)):
-        if pct[i] <= level < pct[i - 1]:
-            f = (pct[i - 1] - level) / (pct[i - 1] - pct[i])
-            return T[i - 1] + f * (T[i] - T[i - 1])
     return None
 
 
@@ -245,7 +248,88 @@ def _duration(run: TGARun) -> float:
     return run.rows[-1][0] - run.rows[0][0] if run.rows else 0.0
 
 
-def build_info(run: TGARun, opts: ExportOptions, n_out: int, headers: list[str], warnings: list[str]) -> str:
+def run_type_label(run_type: str, n_cycles: int) -> str:
+    return "Ramp" if run_type == RAMP else f"Cycling ({n_cycles} cycle{'s' if n_cycles != 1 else ''})"
+
+
+def _t(v: float | None, width: int) -> str:
+    return (f"{v:.1f}" if v is not None else "n.r.").rjust(width)
+
+
+def _results_lines(run, opts, run_type, run_type_source, cycles) -> list[str]:
+    ti, wi = _signal_index(run, "Temperature"), _signal_index(run, "Weight")
+    t = [r[0] for r in run.rows]
+    T = [r[ti] for r in run.rows]
+    W = [r[wi] for r in run.rows]
+    levels = opts.tloss_levels if opts.info_tloss else []
+    n = len(run.rows)
+    out = ["", f"Run type: {run_type_label(run_type, len(cycles))}  ({run_type_source})"]
+
+    if run_type == RAMP:
+        if not (opts.info_residue or opts.info_tloss):
+            return out
+        r = segment_result(t, T, W, 0, n, levels)
+        out += ["", "Results (whole run, relative to the first recorded weight)"]
+        if opts.info_residue:
+            out.append(f"  Initial weight     {r.w_start:.4f} mg")
+            out.append(f"  Final weight       {r.w_end:.4f} mg   (at {T[-1]:.1f} °C)")
+            out.append(f"  Final residue      {r.residue_pct:.2f} %")
+            out.append(f"  Total mass loss    {r.w_start - r.w_end:.4f} mg   ({100 - r.residue_pct:.2f} %)")
+        for x in levels:
+            v = r.t_at_loss[x]
+            out.append(f"  {'T at ' + fmt_level(x) + '% loss':<19}" + (f"{v:.1f} °C" if v is not None else "not reached"))
+        if levels:
+            out.append("  (T at x% loss = temperature where the weight first drops below 100 - x % of the initial weight.)")
+        return out
+
+    # cycling
+    res = [segment_result(t, T, W, a, b, levels) for a, b in cycles]
+    if opts.info_residue:
+        w0, w1 = W[0], W[-1]
+        out += ["", "Whole run"]
+        out.append(f"  Initial weight {w0:.4f} mg, final weight {w1:.4f} mg, "
+                   f"final residue {100 * w1 / w0:.2f} % of the initial weight")
+    out += ["", "Results per cycle (relative to the weight at the start of each cycle)"]
+    head1 = ["Cycle", "Start", "End", "T min", "T max"]
+    head2 = ["", "(min)", "(min)", "(°C)", "(°C)"]
+    widths = [5, 9, 9, 7, 7]
+    if opts.info_residue:
+        head1 += ["W start", "W end", "Change"]
+        head2 += ["(mg)", "(mg)", "(%)"]
+        widths += [9, 9, 8]
+    for x in levels:
+        head1.append(f"T{fmt_level(x)}%")
+        head2.append("(°C)")
+        widths.append(max(7, len(fmt_level(x)) + 3))
+    out.append("  " + " ".join(h.rjust(w) for h, w in zip(head1, widths)))
+    out.append("  " + " ".join(h.rjust(w) for h, w in zip(head2, widths)))
+    for k, r in enumerate(res, 1):
+        cells = [str(k), f"{r.start_time:.2f}", f"{r.end_time:.2f}", f"{r.t_min:.1f}", f"{r.t_max:.1f}"]
+        if opts.info_residue:
+            cells += [f"{r.w_start:.4f}", f"{r.w_end:.4f}", f"{r.change_pct:+.2f}"]
+        row = "  " + " ".join(c.rjust(w) for c, w in zip(cells, widths))
+        tcols = [_t(r.t_at_loss[x], w) for x, w in zip(levels, widths[len(cells):])]
+        out.append(row + ("" if not tcols else " " + " ".join(tcols)))
+    if opts.info_residue:
+        out.append("  Change = 100 x (W end - W start) / W start; negative = mass lost in that cycle.")
+    if levels:
+        out.append("  Tx% = temperature where the weight first drops x % below the weight at the start of the cycle;")
+        out.append("  n.r. = not reached in that cycle.")
+    return out
+
+
+def build_info(
+    run: TGARun,
+    opts: ExportOptions,
+    n_out: int,
+    headers: list[str],
+    warnings: list[str],
+    run_type: str = RAMP,
+    run_type_source: str = "detected automatically",
+    cycles: list[tuple[int, int]] | None = None,
+) -> str:
+    if cycles is None:
+        cycles = [(0, len(run.rows))]
     g = run.get
     lines = [
         f"{APP_NAME} {APP_VERSION} - run information",
@@ -285,21 +369,8 @@ def build_info(run: TGARun, opts: ExportOptions, n_out: int, headers: list[str],
         lines += [f"  {t:10.4f} min  -> gas {gnum}" for t, gnum in run.gas_events]
 
     wi = _signal_index(run, "Weight")
-    if wi is not None and ti is not None and run.rows[0][wi] != 0:
-        W = [r[wi] for r in run.rows]
-        T = [r[ti] for r in run.rows]
-        pct = [100.0 * w / W[0] for w in W]
-        lines += ["", "Results (from all recorded points, relative to the first recorded weight)"]
-        lines.append(f"  Initial weight     {W[0]:.4f} mg")
-        lines.append(f"  Final weight       {W[-1]:.4f} mg   (at {T[-1]:.1f} °C)")
-        lines.append(f"  Final residue      {pct[-1]:.2f} %")
-        lines.append(f"  Total mass loss    {W[0] - W[-1]:.4f} mg   ({100 - pct[-1]:.2f} %)")
-        for loss in (1, 5, 10):
-            tx = _temperature_at_loss(T, pct, loss)
-            label = f"T at {loss}% loss"
-            lines.append(f"  {label:<19}" + (f"{tx:.1f} °C" if tx is not None else "not reached"))
-        lines.append("  (T at x% loss = temperature where the weight first drops below 100 - x %;")
-        lines.append("   for runs with isothermal holds, cooling or gas cycling, read it with care.)")
+    if wi is not None and ti is not None:
+        lines += _results_lines(run, opts, run_type, run_type_source, cycles)
 
     lines += ["", "CSV columns"]
     lines += [f"  {h}" for h in headers]
@@ -323,6 +394,11 @@ def build_info(run: TGARun, opts: ExportOptions, n_out: int, headers: list[str],
             lines.append(
                 f"  %/°C is left blank where the heating rate is below {DTG_MIN_HEATING_RATE} °C/min (isothermal segments)."
             )
+    if run_type == CYCLING:
+        lines.append(
+            f"  Cycles: a new cycle starts where heating resumes after the temperature has dropped at least "
+            f"{COOL_DROP_C:g} °C below the cycle's maximum and then risen again by at least {REHEAT_RISE_C:g} °C."
+        )
     if opts.reduce_like_ua and len(run.rows) > UA_REDUCE_ABOVE:
         lines.append(
             f"  Data reduced to about {UA_POINT_TARGET} points by averaging consecutive points "
@@ -336,7 +412,25 @@ def build_info(run: TGARun, opts: ExportOptions, n_out: int, headers: list[str],
     return "\r\n".join(lines) + "\r\n"
 
 
-def export_run(run: TGARun, opts: ExportOptions) -> ExportResult:
+def cycles_for(run: TGARun) -> list[tuple[int, int]]:
+    ti = _signal_index(run, "Temperature")
+    if ti is None or not run.rows:
+        return [(0, len(run.rows))]
+    return detect_cycles([r[0] for r in run.rows], [r[ti] for r in run.rows])
+
+
+def export_run(
+    run: TGARun,
+    opts: ExportOptions,
+    run_type: str | None = None,
+    run_type_source: str = "detected automatically",
+    cycles: list[tuple[int, int]] | None = None,
+) -> ExportResult:
+    """run_type None = detect. cycles may be passed in if already detected."""
+    if cycles is None:
+        cycles = cycles_for(run)
+    if run_type is None:
+        run_type = CYCLING if len(cycles) > 1 else RAMP
     headers, table, warnings = build_table(run, opts)
     csv_path, info_path = output_paths(run.path, opts.output_dir)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -345,7 +439,7 @@ def export_run(run: TGARun, opts: ExportOptions) -> ExportResult:
         for row in table:
             fh.write(",".join(_fmt(v) for v in row) + "\r\n")
     if opts.write_info:
-        info_path.write_text(build_info(run, opts, len(table), headers, warnings), encoding="utf-8-sig", newline="")
+        info_path.write_text(build_info(run, opts, len(table), headers, warnings, run_type, run_type_source, cycles), encoding="utf-8-sig", newline="")
     else:
         info_path = None
     return ExportResult(csv_path, info_path, len(table), len(run.rows), warnings)

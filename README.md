@@ -4,7 +4,7 @@ Small Windows app that converts TA Instruments TGA Q500 raw data files
 (`.001`, `.002`, … `.999`) into CSV files, without going through
 Universal Analysis (UA).
 
-Current version: **0.3.0**
+Current version: **0.4.0**
 
 ## Getting the app
 
@@ -21,13 +21,15 @@ The first time it runs, Windows may show *"Windows protected your PC"*
    `.001`–`.999` file in it), or drag files/folders onto the file list.
    Files with any run number (`.001`, `.002`, `.003`, …) are treated the
    same; aborted or short runs convert normally.
-2. **Section 2 – Columns to export:** signals recorded by the instrument.
-3. **Section 3 – Columns to calculate:** derived columns (see below).
-4. **Section 4 – Options:** data reduction, info file, output folder.
-5. **Convert to CSV.**
+2. **Check the run type** of each file (see *Run type* below).
+3. **Section 2 – Columns to export:** signals recorded by the instrument.
+4. **Section 3 – Columns to calculate:** derived columns (see below).
+5. **Section 4 – Info file:** what goes into the info file.
+6. **Section 5 – Options:** data reduction, output folder.
+7. **Convert to CSV.**
 
-The file list shows sample name, run date, number of points and duration
-for each file. The Status column turns **green** when a file is converted
+The file list shows sample name, run date, number of points, duration and
+run type for each file. The Status column turns **green** when a file is converted
 and **red** if it cannot be read or the conversion fails (the reason is
 shown).
 
@@ -36,9 +38,37 @@ shown).
 The app remembers nothing between sessions (it runs on a shared
 instrument PC). Every time it opens:
 
+- Run type: **Auto-detect**
 - Columns to export: **Time, Temperature, Weight** on; purge flows and gas off
 - Columns to calculate: **Weight (%)** on; everything else off
-- Reduction **off**, info file **on**, output to **the same folder as each file**
+- Info file **on**, with final residue and temperatures at 1, 5, 10, 50 % mass loss
+- Reduction **off**, output to **the same folder as each file**
+
+## Run type: ramp or cycling
+
+Each file is classified when it is added, and the result is shown in the
+**Run type** column:
+
+- **Ramp** – one or more heating ramps, possibly at different rates, with
+  isothermal holds or small temperature dips in between.
+- **Cycling (N)** – the sample is cooled significantly and heated again,
+  N times. A new cycle starts where heating resumes after the temperature
+  has dropped **at least 50 °C** below the highest temperature of the
+  current cycle and then risen again by **at least 50 °C**. Small dips of
+  10–20 °C do not start a new cycle. Any hold at the low temperature (for
+  example a CO₂-uptake step) stays in the cycle it follows.
+
+Batches can mix both kinds; each file is processed according to its own
+run type. To correct a file, **double-click its Run type cell** (it
+toggles between Ramp and Cycling and shows "– manual"). The **Run type**
+selector next to the file list can also treat all files as ramp or all as
+cycling. The info file always states the run type used and whether it was
+detected, set for that file, or set for all files.
+
+Tested on the lab's 50 files: 39 detected as ramp (including the LaNiO
+runs with two heating rates), 11 CaCO₃ cycling runs detected with 10
+cycles each, with boundaries matching the method (start of each re-heat,
+just before the switch back to gas 1).
 
 ### Output files
 
@@ -96,13 +126,27 @@ some samples are not completely dry at 150 °C (0.03–0.86 % further loss
 before decomposition in our test runs). A higher reference temperature,
 still below any decomposition, reduces this.
 
-### Results in the info file
+### Info file (section 4)
 
-Computed from every recorded point, relative to the first recorded weight:
-initial and final weight, final residue (%), total mass loss (mg and %),
-and the temperatures at 1 %, 5 % and 10 % mass loss. "T at x % loss" is
-the first time the weight drops below 100 − x %; for runs with
-isothermal holds, cooling or gas cycling, read it with care.
+- **Write info file** – on by default; the options below are greyed out when it is off.
+- **Final residue and mass loss**
+- **Temperature at mass loss** – either the standard set **1, 5, 10, 50 %**
+  or a **custom** list typed by the user (comma-separated, e.g. `2, 5, 20`).
+
+Results are computed from every recorded point:
+
+- **Ramp:** initial and final weight, final residue (%), total mass loss
+  (mg and %), and T at each selected % loss, relative to the first
+  recorded weight.
+- **Cycling:** the whole-run final residue, then a table with one row per
+  cycle: start and end time, min and max temperature, weight at the start
+  and end of the cycle, change (%), and T at each selected % loss.
+  **Per-cycle values are relative to the weight at the start of that
+  cycle**, so each cycle is measured on its own terms. "n.r." = not
+  reached in that cycle.
+
+"T at x % loss" is the first time the weight drops x % below the
+reference weight.
 
 ## Full data vs. Universal Analysis
 
@@ -149,13 +193,14 @@ Reverse-engineered from Q Series files:
 | File | Role |
 |---|---|
 | `tga_reader.py` | Reads `.001`–`.999` files |
+| `analysis.py` | Run-type / cycle detection, results per run and per cycle |
 | `converter.py` | Columns, calculations, reduction, CSV and info file |
 | `app.py` | Window (Tkinter, drag-and-drop via tkinterdnd2) |
-| `tests/smoke_gui.py` | Check run on every build |
+| `tests/smoke_gui.py` | Checks run on every build (window, options, run type, cycle detection) |
 | `.github/workflows/build-windows.yml` | Builds the .exe on GitHub's Windows machine |
 
 GitHub Actions builds the `.exe` on every push to `main`. Pushing a tag
-such as `v0.3.0` also publishes it on the **Releases** page.
+such as `v0.4.0` also publishes it on the **Releases** page.
 
 To build locally (Windows, Python 3.10+):
 
@@ -168,6 +213,7 @@ pyinstaller --onefile --windowed --name TGA-Q500-DataConverter --collect-all tki
 
 | Version | Changes |
 |---|---|
+| 0.4.0 | Run type per file (auto-detected ramp / cycling, double-click to change, all-files selector); per-cycle results; new section 4 "Info file" (residue, T at 1/5/10/50 % or custom list); Options becomes section 5 |
 | 0.3.0 | Weight dry basis, mass loss, heating rate, DTG in mg/min; results section in info file |
 | 0.2.1 | Nothing remembered between sessions |
 | 0.2.0 | Separate "export" and "calculate" sections; Desktop guard; smoothing window greyed out unless used |
