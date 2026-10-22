@@ -57,6 +57,41 @@ def detect_cycles(t: list[float], T: list[float]) -> list[tuple[int, int]]:
     return list(zip(starts, starts[1:] + [n]))
 
 
+_SETPOINT = re.compile(
+    r"(?:Ramp [\d.]+ °C/min(?: res [-\d.]+ °C)? to|Equilibrate at|Jump to|Initial temp) ([-\d.]+) °C"
+)
+
+
+def method_programs_cooling(steps: list[str], start_temp: float) -> bool | None:
+    """Does the method programme a cool-down of at least COOL_DROP_C followed by re-heating?
+
+    Returns None when the file has no method steps. Used so that temperature
+    drops the method did not ask for (e.g. Hi-Res runs, where the instrument
+    slows down or reverses heating during fast mass loss) are not taken as cycles.
+    """
+    if not steps:
+        return None
+    peak = start_temp
+    cooling = False
+    low = 0.0
+    for st in steps:
+        m = _SETPOINT.search(st)
+        if not m:
+            continue
+        x = float(m.group(1))
+        if not cooling:
+            if x > peak:
+                peak = x
+            elif peak - x >= COOL_DROP_C:
+                cooling, low = True, x
+        else:
+            if x < low:
+                low = x
+            elif x - low >= REHEAT_RISE_C:
+                return True
+    return False
+
+
 def parse_loss_levels(text: str) -> list[float]:
     """'2, 5; 20 %' -> [2.0, 5.0, 20.0]. Raises ValueError on bad input."""
     parts = [p for p in re.split(r"[,;\s%]+", text.strip()) if p]

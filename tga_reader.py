@@ -56,6 +56,26 @@ class TGARun:
 
 
 def is_raw_file(path: str | Path) -> bool:
+    """True if the file is a TA Q-series raw data file, judged by its content.
+
+    The extension is not reliable: users often name runs with dots
+    ("6.27 MgCl 1 180") or rename files, so a raw file may not end in .001.
+    Text exports from Universal Analysis also start with the same header
+    but are tab-separated, so they are rejected.
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(512)
+    except OSError:
+        return False
+    if not head.startswith(b"\xff\xfe"):
+        return False
+    text = head[2:].decode("utf-16-le", errors="replace")
+    return text.split("\r", 1)[0] in ("CLOSED", "ACTIVE", "OPEN") and "\t" not in text
+
+
+def has_run_number(path: str | Path) -> bool:
+    """True if the file name ends in a run number such as .001 or .002."""
     return bool(RAW_EXT.search(str(path)))
 
 

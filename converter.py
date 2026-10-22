@@ -15,12 +15,13 @@ from analysis import (
     STANDARD_LOSS_LEVELS,
     detect_cycles,
     fmt_level,
+    method_programs_cooling,
     segment_result,
 )
-from tga_reader import TGARun
+from tga_reader import TGARun, has_run_number
 
 APP_NAME = "TGA Q500 Data Converter"
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.5.0"
 
 UA_POINT_TARGET = 19000
 UA_REDUCE_ABOVE = 20000  # UA leaves runs of up to ~19,800 points untouched; 21,450 were reduced
@@ -92,9 +93,14 @@ class ConversionError(Exception):
     pass
 
 
-def output_paths(src: Path, out_dir: Path | None) -> tuple[Path, Path]:
-    """sample.001 -> sample_001.csv / sample_001_info.txt (run number kept)."""
-    stem = src.stem + "_" + src.suffix.lstrip(".") if src.suffix else src.name
+def output_paths(src: Path, out_dir: Path | None, stem: str | None = None) -> tuple[Path, Path]:
+    """sample.001 -> sample_001.csv / sample_001_info.txt (run number kept).
+
+    Names without a run number keep their full name, dots included:
+    '6.27 MgCl 1 180' -> '6.27 MgCl 1 180.csv'.
+    """
+    if stem is None:
+        stem = src.stem + "_" + src.suffix.lstrip(".") if has_run_number(src) else src.name
     folder = out_dir or src.parent
     return folder / f"{stem}.csv", folder / f"{stem}_info.txt"
 
@@ -107,21 +113,35 @@ def _signal_index(run: TGARun, prefix: str) -> int | None:
 
 
 def _local_slope(x: list[float], y: list[float], half: int) -> list[float | None]:
-    """Least-squares slope dy/dx over a centred window of +-half points."""
+    """Least-squares slope dy/dx over a centred window of +-half points.
+
+    Uses running sums, so the cost does not grow with the window size.
+    """
     n = len(x)
     out: list[float | None] = [None] * n
+    if n == 0:
+        return out
+    x0, y0 = x[n // 2], y[n // 2]  # shift to limit rounding error
+    sx = [0.0] * (n + 1)
+    sy = [0.0] * (n + 1)
+    sxx = [0.0] * (n + 1)
+    sxy = [0.0] * (n + 1)
+    for i in range(n):
+        xi, yi = x[i] - x0, y[i] - y0
+        sx[i + 1] = sx[i] + xi
+        sy[i + 1] = sy[i] + yi
+        sxx[i + 1] = sxx[i] + xi * xi
+        sxy[i + 1] = sxy[i] + xi * yi
     for i in range(n):
         a, b = max(0, i - half), min(n, i + half + 1)
         m = b - a
         if m < 3:
             continue
-        xs, ys = x[a:b], y[a:b]
-        mx = sum(xs) / m
-        my = sum(ys) / m
-        sxx = sum((v - mx) ** 2 for v in xs)
-        if sxx == 0:
+        Sx, Sy = sx[b] - sx[a], sy[b] - sy[a]
+        den = m * (sxx[b] - sxx[a]) - Sx * Sx
+        if den <= 0:
             continue
-        out[i] = sum((xs[k] - mx) * (ys[k] - my) for k in range(m)) / sxx
+        out[i] = (m * (sxy[b] - sxy[a]) - Sx * Sy) / den
     return out
 
 
@@ -199,15 +219,19 @@ def build_table(run: TGARun, opts: ExportOptions) -> tuple[list[str], list[list[
     if any(k in opts.columns for k in SMOOTHED_KEYS):
         dt_s = (t[-1] - t[0]) * 60 / max(n - 1, 1) if n > 1 else 0.5
         half = max(1, round(opts.dtg_window_s / 2 / dt_s)) if dt_s > 0 else 1
+        # Sign convention as in Universal Analysis: positive = mass loss.
         dWdt = _local_slope(t, W, half)  # mg/min
-        cols["dtg_mg"] = dWdt
-        cols["dtg_time"] = [None if v is None else 100.0 * v / w0 for v in dWdt]  # %/min
+        cols["dtg_mg"] = [None if v is None else -v for v in dWdt]
+        cols["dtg_time"] = [None if v is None else -100.0 * v / w0 for v in dWdt]  # %/min
         dTdt = _local_slope(t, T, half) if ("heating_rate" in opts.columns or "dtg_temp" in opts.columns) else []
         cols["heating_rate"] = dTdt
         if "dtg_temp" in opts.columns:
+            # Slope of Weight (%) against temperature over the same window (as UA does);
+            # undefined where the temperature hardly changes, so left blank there.
+            dPdT = _local_slope(T, pct, half)
             cols["dtg_temp"] = [
-                (a / b) if (a is not None and b is not None and abs(b) >= DTG_MIN_HEATING_RATE) else None
-                for a, b in zip(cols["dtg_time"], dTdt)
+                (-a) if (a is not None and r is not None and abs(r) >= DTG_MIN_HEATING_RATE) else None
+                for a, r in zip(dPdT, dTdt)
             ]
 
     if "gas" in opts.columns:
@@ -388,8 +412,14 @@ def build_info(
                 )
     if any(k in opts.columns for k in SMOOTHED_KEYS):
         lines.append(
-            f"  Heating rate and derivatives: least-squares slope over a {opts.dtg_window_s:g} s window."
+            f"  Heating rate and derivatives: least-squares slope over a {opts.dtg_window_s:g} s window "
+            "centred on each point."
         )
+        if any(k in opts.columns for k in ("dtg_time", "dtg_temp", "dtg_mg")):
+            lines.append(
+                "  Derivative weight sign: positive = mass loss, negative = mass gain "
+                "(same convention as Universal Analysis)."
+            )
         if "dtg_temp" in opts.columns:
             lines.append(
                 f"  %/°C is left blank where the heating rate is below {DTG_MIN_HEATING_RATE} °C/min (isothermal segments)."
@@ -397,7 +427,8 @@ def build_info(
     if run_type == CYCLING:
         lines.append(
             f"  Cycles: a new cycle starts where heating resumes after the temperature has dropped at least "
-            f"{COOL_DROP_C:g} °C below the cycle's maximum and then risen again by at least {REHEAT_RISE_C:g} °C."
+            f"{COOL_DROP_C:g} °C below the cycle's maximum and then risen again by at least {REHEAT_RISE_C:g} °C, "
+            "provided the method programmes such a cool-down."
         )
     if opts.reduce_like_ua and len(run.rows) > UA_REDUCE_ABOVE:
         lines.append(
@@ -413,10 +444,14 @@ def build_info(
 
 
 def cycles_for(run: TGARun) -> list[tuple[int, int]]:
+    """Cycles found in the data, but only if the method programmes a cool-down."""
     ti = _signal_index(run, "Temperature")
     if ti is None or not run.rows:
         return [(0, len(run.rows))]
-    return detect_cycles([r[0] for r in run.rows], [r[ti] for r in run.rows])
+    T = [r[ti] for r in run.rows]
+    if method_programs_cooling(run.get_all("OrgMethod"), T[0]) is False:
+        return [(0, len(run.rows))]
+    return detect_cycles([r[0] for r in run.rows], T)
 
 
 def export_run(
@@ -425,14 +460,16 @@ def export_run(
     run_type: str | None = None,
     run_type_source: str = "detected automatically",
     cycles: list[tuple[int, int]] | None = None,
+    stem: str | None = None,
 ) -> ExportResult:
-    """run_type None = detect. cycles may be passed in if already detected."""
+    """run_type None = detect. cycles may be passed in if already detected.
+    stem overrides the output file name (used to keep names unique in a batch)."""
     if cycles is None:
         cycles = cycles_for(run)
     if run_type is None:
         run_type = CYCLING if len(cycles) > 1 else RAMP
     headers, table, warnings = build_table(run, opts)
-    csv_path, info_path = output_paths(run.path, opts.output_dir)
+    csv_path, info_path = output_paths(run.path, opts.output_dir, stem)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     with open(csv_path, "w", encoding="utf-8-sig", newline="") as fh:
         fh.write(",".join(_quote(h) for h in headers) + "\r\n")

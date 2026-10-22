@@ -4,7 +4,7 @@ Small Windows app that converts TA Instruments TGA Q500 raw data files
 (`.001`, `.002`, … `.999`) into CSV files, without going through
 Universal Analysis (UA).
 
-Current version: **0.4.0**
+Current version: **0.5.0**
 
 ## Getting the app
 
@@ -17,10 +17,13 @@ The first time it runs, Windows may show *"Windows protected your PC"*
 
 ## Using it
 
-1. **Add files** – *Add files…*, *Add folder…* (picks up every
-   `.001`–`.999` file in it), or drag files/folders onto the file list.
-   Files with any run number (`.001`, `.002`, `.003`, …) are treated the
-   same; aborted or short runs convert normally.
+1. **Add files** – *Add files…*, *Add folder…* (picks up every TGA raw
+   file in it), or drag files/folders onto the file list. Raw files are
+   recognised by their **content**, not their name: `.001`, `.002`, … as
+   well as names with dots or no extension (`6.27 MgCl 1 180`,
+   `2025.02.21_CNI Calicium oxalate std`). Text exports, PDFs and method
+   files (`.mth`) are rejected. Aborted, short and still-running runs
+   convert normally; empty runs are flagged.
 2. **Check the run type** of each file (see *Run type* below).
 3. **Section 2 – Columns to export:** signals recorded by the instrument.
 4. **Section 3 – Columns to calculate:** derived columns (see below).
@@ -54,9 +57,12 @@ Each file is classified when it is added, and the result is shown in the
 - **Cycling (N)** – the sample is cooled significantly and heated again,
   N times. A new cycle starts where heating resumes after the temperature
   has dropped **at least 50 °C** below the highest temperature of the
-  current cycle and then risen again by **at least 50 °C**. Small dips of
-  10–20 °C do not start a new cycle. Any hold at the low temperature (for
-  example a CO₂-uptake step) stays in the cycle it follows.
+  current cycle and then risen again by **at least 50 °C**, **and the
+  method programmes such a cool-down**. Small dips of 10–20 °C do not
+  start a new cycle, and neither do temperature drops the instrument
+  makes on its own (Hi-Res runs slow down or reverse heating during fast
+  mass loss). Any hold at the low temperature (for example a CO₂-uptake
+  step) stays in the cycle it follows.
 
 Batches can mix both kinds; each file is processed according to its own
 run type. To correct a file, **double-click its Run type cell** (it
@@ -65,10 +71,10 @@ selector next to the file list can also treat all files as ramp or all as
 cycling. The info file always states the run type used and whether it was
 detected, set for that file, or set for all files.
 
-Tested on the lab's 50 files: 39 detected as ramp (including the LaNiO
-runs with two heating rates), 11 CaCO₃ cycling runs detected with 10
-cycles each, with boundaries matching the method (start of each re-heat,
-just before the switch back to gas 1).
+Checked on 554 lab runs against their own method steps: 518 ramp,
+36 cycling (2, 10 or 11 cycles). Every cycling run matches its method;
+the only runs whose method programmes cycles but which are reported as
+ramp are 9 runs aborted inside their first cycle.
 
 ### Output files
 
@@ -81,7 +87,10 @@ folder chosen under *This folder*):
 | `sample_001_info.txt` | Sample, mass, operator, date, instrument, pan/gases, method steps, gas-switch times, point count, results, and notes on how each calculated column was made |
 
 - The run number is kept in the name, so `sample.001` and `sample.002`
-  never overwrite each other.
+  never overwrite each other. Names without a run number are kept whole
+  (`6.27 MgCl 1 180` → `6.27 MgCl 1 180.csv`).
+- Two runs with the same name in one batch (e.g. from different folders,
+  saved to one folder) get ` (2)`, ` (3)`, … instead of overwriting.
 - If an output file already exists, the app asks: overwrite, skip, or cancel.
 - **Saving directly on the Desktop is blocked** (normal, OneDrive or
   Public Desktop), both when *This folder* is the Desktop and when the
@@ -106,8 +115,11 @@ folder chosen under *This folder*):
 | Weight dry basis (%) | 100 × Weight / weight when the sample **first** reaches the reference temperature (default 150 °C; input enabled only when this column is ticked) |
 | Mass Loss (%) | 100 − Weight (%) |
 | Heating Rate (°C/min) | Slope of Temperature vs time |
-| Deriv. Weight (%/min) and (mg/min) | Slope of Weight vs time |
-| Deriv. Weight (%/°C) | (%/min) ÷ heating rate; blank where the heating rate is below 0.1 °C/min (isothermal segments) |
+| Deriv. Weight (%/min) and (mg/min) | − slope of Weight vs time |
+| Deriv. Weight (%/°C) | − slope of Weight (%) vs temperature; blank where the heating rate is below 0.1 °C/min (isothermal segments) |
+
+**Sign:** derivatives are **positive for mass loss** and negative for
+mass gain, the same convention as Universal Analysis.
 
 In the CSV, recorded signals come first, then calculated columns.
 
@@ -117,7 +129,8 @@ least-squares straight-line fit over a window centred on the point, so
 peaks are not shifted, only broadened as the window grows. What matters
 is the temperature span, heating rate × window: 10 s is 0.3 °C at
 2 °C/min but 8 °C at 50 °C/min. For fast ramps with sharp steps,
-2–4 s keeps peaks sharper.
+2–4 s keeps peaks sharper. Universal Analysis uses a 60 s window: set
+60 s to reproduce UA's derivative curves.
 
 **Dry basis notes:** one reference weight is used for the whole run, so
 cycles stay on the same scale. It is taken at the instant the reference
@@ -163,12 +176,22 @@ bit-identical copy.
 
 ## Validation
 
-Tested on 50 raw files from the lab's Q500 (LaNiO, CaCO₃ cycling, LiCl /
-MgCl isotherms, NMC/LCO/LFP, blanks, aborted runs, `.002`–`.004` re-runs):
+Tested on **606 raw files** from the lab's Q500 (two sets: 50 files, then
+556 files from ~30 users, 2021–2026; methods include ramps, isothermal
+holds, step-wise ramps, Hi-Res, CaCO₃ cycling, 0.5 s and 2 s sampling,
+`.002`–`.008` re-runs, names without run numbers, an unfinished run):
 
-- all 50 parse and convert;
-- the 32 runs short enough for UA to export in full match UA's text export
-  value for value (within UA's print rounding, ~1 part in 10⁶).
+- every file with data parses and converts, with all columns and
+  options, in under 1 s per file; 2 files are empty runs and are flagged;
+- **229 UA text exports** compared point for point with their raw file
+  (32 + 150 with all five signals, 47 with only some signals or extra UA
+  derivative columns): all agree within UA's print rounding. Another 51
+  exports were reduced by UA or cover only part of the run; their points
+  are all found in the raw data;
+- **18 UA derivative columns**: with a 60 s window, 15 agree to within 2 %
+  of the peak height and all main peak temperatures agree to within
+  0.7 °C; the remaining differences are in %/°C around isothermal holds,
+  where the value is undefined (left blank here).
 
 ## Troubleshooting
 
@@ -200,7 +223,7 @@ Reverse-engineered from Q Series files:
 | `.github/workflows/build-windows.yml` | Builds the .exe on GitHub's Windows machine |
 
 GitHub Actions builds the `.exe` on every push to `main`. Pushing a tag
-such as `v0.4.0` also publishes it on the **Releases** page.
+such as `v0.5.0` also publishes it on the **Releases** page.
 
 To build locally (Windows, Python 3.10+):
 
@@ -213,6 +236,7 @@ pyinstaller --onefile --windowed --name TGA-Q500-DataConverter --collect-all tki
 
 | Version | Changes |
 |---|---|
+| 0.5.0 | Raw files recognised by content (names with dots / no extension); derivative sign as in UA (positive = loss) and %/°C computed against temperature; cycles only where the method programmes a cool-down (fixes Hi-Res runs); unique output names within a batch; faster derivatives |
 | 0.4.0 | Run type per file (auto-detected ramp / cycling, double-click to change, all-files selector); per-cycle results; new section 4 "Info file" (residue, T at 1/5/10/50 % or custom list); Options becomes section 5 |
 | 0.3.0 | Weight dry basis, mass loss, heating rate, DTG in mg/min; results section in info file |
 | 0.2.1 | Nothing remembered between sessions |

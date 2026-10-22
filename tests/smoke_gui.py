@@ -39,6 +39,26 @@ assert len(detect_cycles(t, ramp)) == 1
 assert len(detect_cycles(t, dip)) == 1
 assert len(detect_cycles(t, two)) == 2
 
+# Hi-Res-style data: the temperature drops > 50 °C and rises again, but the
+# method programmes no cool-down, so it must stay a single ramp.
+from analysis import method_programs_cooling  # noqa: E402
+assert method_programs_cooling(["1: Ramp 5.00 °C/min res -4.00 °C to 800.00 °C"], 20) is False
+assert method_programs_cooling(["2: Ramp 50.00 °C/min to 900.00 °C", "4: Equilibrate at 650.00 °C",
+                                "8: Ramp 50.00 °C/min to 900.00 °C"], 20) is True
+
+# derivative sign follows Universal Analysis: positive = mass loss
+from converter import ExportOptions, build_table, output_paths  # noqa: E402
+from tga_reader import TGARun  # noqa: E402
+rows = [(i / 120, 20 + i / 12, 10 - i / 1200, 40.0, 60.0) for i in range(600)]
+run = TGARun(Path("x.001"), [], ["Time (min)", "Temperature (°C)", "Weight (mg)",
+             "Balance Purge Flow (mL/min)", "Sample Purge Flow (mL/min)"], rows, [None] * 600)
+_, tab, _ = build_table(run, ExportOptions(columns=["time", "dtg_time", "dtg_temp"]))
+assert tab[300][1] > 0 and tab[300][2] > 0, "derivative of a mass loss must be positive"
+
+# output names: run number kept, dotted names kept whole
+assert output_paths(Path("a/s.002"), None)[0].name == "s_002.csv"
+assert output_paths(Path("a/6.27 MgCl 1 180"), None)[0].name == "6.27 MgCl 1 180.csv"
+
 a.update()
 a.destroy()
 print("GUI smoke test passed")

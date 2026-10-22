@@ -140,7 +140,7 @@ class App(_BaseTk):
         ttk.Label(head, text="TGA Q500 Data Converter", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             head,
-            text="Converts TA Instruments raw files (.001, .002, ...) to CSV, with a separate info file.",
+            text="Converts TA Instruments TGA raw files (.001, .002, … or any name) to CSV, with a separate info file.",
             style="Sub.TLabel",
         ).pack(anchor="w")
 
@@ -191,7 +191,7 @@ class App(_BaseTk):
             btns, text="Double-click a Run type\ncell to change one file.", style="Sub.TLabel", justify="left"
         ).pack(anchor="w", pady=(2, 0))
         self.empty_hint = ttk.Label(
-            files, text="Add .001 / .002 / … files to get started.", style="Sub.TLabel"
+            files, text="Add TGA raw files to get started.", style="Sub.TLabel"
         )
         self.empty_hint.place(relx=0.4, rely=0.5, anchor="center")
 
@@ -398,14 +398,14 @@ class App(_BaseTk):
                 w.dnd_bind("<<Drop>>", self._on_drop)
             except Exception:
                 pass
-        self.empty_hint.configure(text="Drag .001 / .002 / … files or folders here, or use Add files…")
+        self.empty_hint.configure(text="Drag TGA raw files or folders here, or use Add files…")
 
     def _on_drop(self, event) -> None:
         paths: list[Path] = []
         for item in self.tk.splitlist(event.data):
             p = Path(item)
             if p.is_dir():
-                paths += sorted(q for q in p.iterdir() if q.is_file() and is_raw_file(q.name))
+                paths += sorted(q for q in p.iterdir() if q.is_file() and is_raw_file(q))
             elif p.is_file():
                 paths.append(p)
         self._add_paths(paths)
@@ -414,7 +414,7 @@ class App(_BaseTk):
     def add_files(self) -> None:
         paths = filedialog.askopenfilenames(
             title="Select TGA raw data files",
-            filetypes=[("TA raw data (.001, .002, …)", "*.0*"), ("All files", "*.*")],
+            filetypes=[("All files", "*.*"), ("Files ending in .001, .002, …", "*.0*")],
         )
         self._add_paths([Path(p) for p in paths])
 
@@ -422,9 +422,9 @@ class App(_BaseTk):
         d = filedialog.askdirectory(title="Select a folder with TGA raw data files")
         if not d:
             return
-        found = sorted(p for p in Path(d).iterdir() if p.is_file() and is_raw_file(p.name))
+        found = sorted(p for p in Path(d).iterdir() if p.is_file() and is_raw_file(p))
         if not found:
-            messagebox.showinfo(APP_NAME, "No .001 / .002 / … files found in that folder.")
+            messagebox.showinfo(APP_NAME, "No TGA raw data files found in that folder.")
             return
         self._add_paths(found)
 
@@ -436,8 +436,8 @@ class App(_BaseTk):
             known.add(str(p))
             info = {"path": p, "run": None, "error": None, "cycles": [], "detected": RAMP, "override": None}
             try:
-                if not is_raw_file(p.name):
-                    raise TGAFormatError("not a .001 / .002 / … file")
+                if not is_raw_file(p):
+                    raise TGAFormatError("not a TGA raw data file")
                 run = read_tga(p)
                 info["run"] = run
                 info["cycles"] = cycles_for(run)
@@ -550,7 +550,7 @@ class App(_BaseTk):
             return
         jobs = [(iid, v) for iid, v in self.files.items() if v["run"]]
         if not jobs:
-            messagebox.showinfo(APP_NAME, "Add at least one readable .001 / .002 / … file first.")
+            messagebox.showinfo(APP_NAME, "Add at least one readable TGA raw file first.")
             return
         opts = self._collect_options()
         if opts is None:
@@ -567,14 +567,25 @@ class App(_BaseTk):
                 )
                 return
 
+        # Planned output names; two runs with the same name (e.g. from different
+        # folders, saved to one folder) get " (2)", " (3)", ... instead of overwriting.
+        planned: dict[str, str] = {}
+        used: set[str] = set()
+        for iid, v in jobs:
+            csv_p, _ = output_paths(v["path"], opts.output_dir)
+            stem, k = csv_p.stem, 2
+            while str(csv_p.with_name(stem + ".csv")).lower() in used:
+                stem, k = f"{csv_p.stem} ({k})", k + 1
+            used.add(str(csv_p.with_name(stem + ".csv")).lower())
+            planned[iid] = stem
+
         existing = []
-        for _, v in jobs:
-            csv_p, info_p = output_paths(v["path"], opts.output_dir)
+        for iid, v in jobs:
+            csv_p, info_p = output_paths(v["path"], opts.output_dir, planned[iid])
             if csv_p.exists() or (opts.write_info and info_p.exists()):
-                existing.append(csv_p.name)
-        skip_existing = False
+                existing.append((iid, csv_p.name))
         if existing:
-            names = "\n".join(existing[:8]) + ("\n…" if len(existing) > 8 else "")
+            names = "\n".join(n for _, n in existing[:8]) + ("\n…" if len(existing) > 8 else "")
             ans = messagebox.askyesnocancel(
                 APP_NAME,
                 f"{len(existing)} output file(s) already exist:\n\n{names}\n\n"
@@ -582,28 +593,26 @@ class App(_BaseTk):
             )
             if ans is None:
                 return
-            skip_existing = not ans
+            if not ans:
+                skip = {iid for iid, _ in existing}
+                jobs = [(iid, v) for iid, v in jobs if iid not in skip]
 
-        if skip_existing:
-            jobs = [
-                (iid, v) for iid, v in jobs if output_paths(v["path"], opts.output_dir)[0].name not in existing
-            ]
         self.busy = True
         self.n_failed = 0
         self.convert_btn.configure(state="disabled")
         self.progress.configure(maximum=len(jobs), value=0)
         for iid, _ in jobs:
             self.tree.set(iid, "status", "Waiting…")
-        jobs = [(iid, v, *self._effective_type(v)) for iid, v in jobs]
+        jobs = [(iid, v, *self._effective_type(v), planned[iid]) for iid, v in jobs]
         threading.Thread(target=self._worker, args=(jobs, opts), daemon=True).start()
         self.after(100, self._poll)
 
     def _worker(self, jobs, opts: ExportOptions) -> None:
-        for iid, v, rtype, source in jobs:
+        for iid, v, rtype, source, stem in jobs:
             self.queue.put(("start", iid, None))
             try:
-                res = export_run(v["run"], opts, rtype, source, v["cycles"])
-                note = "Done"
+                res = export_run(v["run"], opts, rtype, source, v["cycles"], stem)
+                note = "Done" if res.csv_path.stem == output_paths(v["path"], None)[0].stem else f"Done → {res.csv_path.name}"
                 if res.points_written != res.points_raw:
                     note += f" (reduced to {res.points_written:,} pts)"
                 if res.warnings:
