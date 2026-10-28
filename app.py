@@ -204,7 +204,7 @@ class App(_BaseTk):
 
         rawbox = ttk.LabelFrame(mid, text=" 2. Columns to export ", style="Section.TLabelframe", padding=8)
         rawbox.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        calcbox = ttk.LabelFrame(mid, text=" 3. Columns to calculate ", style="Section.TLabelframe", padding=8)
+        calcbox = ttk.LabelFrame(mid, text=" 3. Variables to calculate ", style="Section.TLabelframe", padding=8)
         calcbox.grid(row=0, column=1, sticky="nsew", padx=(0, 8))
         self.window_var = tk.StringVar(value="10")
         self.dry_var = tk.StringVar(value="150")
@@ -268,7 +268,7 @@ class App(_BaseTk):
         self.tloss_hint = ttk.Label(info, text="% (e.g. 2, 5, 20)", style="Sub.TLabel")
         self.tloss_hint.grid(row=4, column=2, sticky="w")
 
-        opt = ttk.LabelFrame(right, text=" 5. Options ", style="Section.TLabelframe", padding=8)
+        opt = ttk.LabelFrame(right, text=" 5. Save options ", style="Section.TLabelframe", padding=8)
         opt.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
         right.rowconfigure(1, weight=1)
         opt.columnconfigure(1, weight=1)

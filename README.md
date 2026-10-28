@@ -1,10 +1,10 @@
 # TGA Q500 Data Converter
 
 Small Windows app that converts TA Instruments TGA Q500 raw data files
-(`.001`, `.002`, … `.999`) into CSV files, without going through
-Universal Analysis (UA).
+(`.001`, `.002`, … or any other name) into CSV files, without going
+through Universal Analysis (UA).
 
-Current version: **0.5.2**
+Current version: **0.5.3**
 
 ## Getting the app
 
@@ -43,9 +43,11 @@ The first time it runs, Windows may show *"Windows protected your PC"*
    convert normally; empty runs are flagged.
 2. **Check the run type** of each file (see *Run type* below).
 3. **Section 2 – Columns to export:** signals recorded by the instrument.
-4. **Section 3 – Columns to calculate:** derived columns (see below).
-5. **Section 4 – Info file:** what goes into the info file.
-6. **Section 5 – Options:** data reduction, output folder.
+4. **Section 3 – Variables to calculate:** values calculated from the
+   recorded signals (see below).
+5. **Section 4 – Info file:** whether to write the info file and which
+   results to put in it.
+6. **Section 5 – Save options:** data reduction and output folder.
 7. **Convert to CSV.**
 
 The file list shows sample name, run date, number of points, duration and
@@ -60,9 +62,9 @@ instrument PC). Every time it opens:
 
 - Run type: **Auto-detect**
 - Columns to export: **Time, Temperature, Weight** on; purge flows and gas off
-- Columns to calculate: **Weight (%)** on; everything else off
+- Variables to calculate: **Weight (%)** on; everything else off
 - Info file **on**; final residue and temperature at mass loss **off** (tick them to add results)
-- Reduction **off**, output to **the same folder as each file**
+- Save options: reduction **off**, output to **the same folder as each file**
 
 ## Run type: ramp or cycling
 
@@ -101,22 +103,23 @@ folder chosen under *This folder*):
 | File | Contents |
 |---|---|
 | `sample_001.csv` | Plain table, one header row with column names and units, comma-separated, UTF-8 (opens directly in Excel) |
-| `sample_001_info.txt` | Sample, mass, operator, date, instrument, pan/gases, method steps, gas-switch times, point count, results, and notes on how each calculated column was made |
+| `sample_001_info.txt` | Sample, mass, operator, date, instrument, pan/gases, method steps, gas-switch times, run type, point count, notes on how each calculated variable was made, and the results selected in section 4 |
 
 - The run number is kept in the name, so `sample.001` and `sample.002`
   never overwrite each other. Names without a run number are kept whole
   (`6.27 MgCl 1 180` → `6.27 MgCl 1 180.csv`).
 - Two runs with the same name in one batch (e.g. from different folders,
   saved to one folder) get ` (2)`, ` (3)`, … instead of overwriting.
+- Files are saved in the folder chosen in **section 5 – Save options**.
 - If an output file already exists, the app asks: overwrite, skip, or cancel.
 - **Saving directly on the Desktop is blocked** (normal, OneDrive or
   Public Desktop), both when *This folder* is the Desktop and when the
   source files sit on the Desktop with *Same folder as each file*.
   Subfolders of the Desktop are allowed.
 
-## Columns
+## Columns and variables
 
-### Columns to export (recorded by the instrument)
+### Section 2 – Columns to export (recorded by the instrument)
 
 | Column | Source |
 |---|---|
@@ -124,12 +127,14 @@ folder chosen under *This folder*):
 | Balance / Sample Purge Flow (mL/min) | Raw signals |
 | Gas | Active gas (1 or 2), from the gas-switch records stored in the file |
 
-### Columns to calculate
+### Section 3 – Variables to calculate
 
-| Column | Definition |
+Each ticked variable becomes a column in the CSV.
+
+| Variable | Definition |
 |---|---|
 | Weight (%) | 100 × Weight / first recorded weight |
-| Weight dry basis (%) | 100 × Weight / weight when the sample **first** reaches the reference temperature (default 150 °C; input enabled only when this column is ticked) |
+| Weight dry basis (%) | 100 × Weight / weight when the sample **first** reaches the reference temperature (default 150 °C; input enabled only when this variable is ticked) |
 | Mass Loss (%) | 100 − Weight (%) |
 | Heating Rate (°C/min) | Slope of Temperature vs time |
 | Deriv. Weight (%/min) and (mg/min) | − slope of Weight vs time |
@@ -138,10 +143,10 @@ folder chosen under *This folder*):
 **Sign:** derivatives are **positive for mass loss** and negative for
 mass gain, the same convention as Universal Analysis.
 
-In the CSV, recorded signals come first, then calculated columns.
+In the CSV, recorded signals come first, then calculated variables.
 
 **Smoothing window** (heating rate and derivatives; default 10 s,
-enabled only when one of those columns is ticked): each slope is a
+enabled only when one of those variables is ticked): each slope is a
 least-squares straight-line fit over a window centred on the point, so
 peaks are not shifted, only broadened as the window grows. What matters
 is the temperature span, heating rate × window: 10 s is 0.3 °C at
@@ -156,14 +161,19 @@ some samples are not completely dry at 150 °C (0.03–0.86 % further loss
 before decomposition in our test runs). A higher reference temperature,
 still below any decomposition, reduces this.
 
-### Info file (section 4)
+### Section 4 – Info file
 
 - **Write info file** – on by default; the options below are greyed out when it is off.
-- **Final residue and mass loss** – off by default
-- **Temperature at mass loss** – off by default; when ticked, either the standard set **1, 5, 10, 50 %**
-  or a **custom** list typed by the user (comma-separated, e.g. `2, 5, 20`).
+- **Final residue and mass loss** – off by default.
+- **Temperature at mass loss** – off by default; when ticked, either the
+  standard set **1, 5, 10, 50 %** or a **custom** list typed by the user
+  (comma-separated, e.g. `2, 5, 20`).
 
-Results are computed from every recorded point:
+With both results off, the info file still contains the run details,
+method steps, gas switches and run type, and for cycling runs the start
+and end time and temperature range of each cycle.
+
+When ticked, results are computed from every recorded point:
 
 - **Ramp:** initial and final weight, final residue (%), total mass loss
   (mg and %), and T at each selected % loss, relative to the first
@@ -177,6 +187,13 @@ Results are computed from every recorded point:
 
 "T at x % loss" is the first time the weight drops x % below the
 reference weight.
+
+## Section 5 – Save options
+
+- **Reduce long runs to ~19,000 points (UA style)** – off by default (see below).
+- **Save CSV files to:** *Same folder as each file* (default) or *This
+  folder* (type a path or use *Browse…*). Saving directly on the Desktop
+  is blocked.
 
 ## Full data vs. Universal Analysis
 
@@ -242,9 +259,9 @@ Reverse-engineered from Q Series files:
 GitHub Actions builds the three `.exe` files on every push to `main`
 (Windows 10/11 with Python 3.12; Windows 7 64-bit and 32-bit with
 Python 3.8 and PyInstaller 5.13.2) and runs the checks in each. Pushing a
-tag such as `v0.5.1` also publishes them on the **Releases** page.
+tag such as `v0.5.3` also publishes them on the **Releases** page.
 
-To build locally (Windows, Python 3.10+):
+To build locally (Windows, Python 3.8 or newer; use 3.8 for Windows 7):
 
 ```
 pip install pyinstaller tkinterdnd2
@@ -255,6 +272,7 @@ pyinstaller --onefile --windowed --name TGA-Q500-DataConverter --collect-all tki
 
 | Version | Changes |
 |---|---|
+| 0.5.3 | Section names: "Variables to calculate" (3) and "Save options" (5) |
 | 0.5.2 | Info file: residue and temperature at mass loss off by default |
 | 0.5.1 | Windows 7 builds (32- and 64-bit); Python 3.8 compatibility fix |
 | 0.5.0 | Raw files recognised by content (names with dots / no extension); derivative sign as in UA (positive = loss) and %/°C computed against temperature; cycles only where the method programmes a cool-down (fixes Hi-Res runs); unique output names within a batch; faster derivatives |
