@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -15,13 +14,14 @@ from analysis import (
     STANDARD_LOSS_LEVELS,
     detect_cycles,
     fmt_level,
+    interval_loss,
     method_programs_cooling,
     segment_result,
 )
 from tga_reader import TGARun, has_run_number
 
 APP_NAME = "TGA Q500 Data Converter"
-APP_VERSION = "0.5.3"
+APP_VERSION = "0.6.0"
 
 UA_POINT_TARGET = 19000
 UA_REDUCE_ABOVE = 20000  # UA leaves runs of up to ~19,800 points untouched; 21,450 were reduced
@@ -32,26 +32,29 @@ DTG_MIN_HEATING_RATE = 0.1  # °C/min; below this, %/°C is left blank (isotherm
 class ColumnDef:
     key: str
     label: str           # shown in the app
-    header: str          # CSV header
+    header: str          # CSV header: code-friendly (lowercase, ASCII, units as suffix)
+    description: str     # readable name and unit, listed in the info file
     default: bool
     group: str           # "raw" = recorded by the instrument, "calc" = calculated
 
 
 # Order here is the column order in the CSV: recorded signals first, then calculated.
 COLUMNS: list[ColumnDef] = [
-    ColumnDef("time", "Time (min)", "Time (min)", True, "raw"),
-    ColumnDef("temp", "Temperature (°C)", "Temperature (°C)", True, "raw"),
-    ColumnDef("weight", "Weight (mg)", "Weight (mg)", True, "raw"),
-    ColumnDef("balance_flow", "Balance purge flow (mL/min)", "Balance Purge Flow (mL/min)", False, "raw"),
-    ColumnDef("sample_flow", "Sample purge flow (mL/min)", "Sample Purge Flow (mL/min)", False, "raw"),
-    ColumnDef("gas", "Active gas (1 or 2)", "Gas", False, "raw"),
-    ColumnDef("weight_pct", "Weight (%)", "Weight (%)", True, "calc"),
-    ColumnDef("weight_pct_dry", "Weight (%), dry basis", "Weight dry basis (%)", False, "calc"),
-    ColumnDef("mass_loss", "Mass loss (%)", "Mass Loss (%)", False, "calc"),
-    ColumnDef("heating_rate", "Heating rate (°C/min)", "Heating Rate (°C/min)", False, "calc"),
-    ColumnDef("dtg_time", "Derivative weight (%/min)", "Deriv. Weight (%/min)", False, "calc"),
-    ColumnDef("dtg_temp", "Derivative weight (%/°C)", "Deriv. Weight (%/°C)", False, "calc"),
-    ColumnDef("dtg_mg", "Derivative weight (mg/min)", "Deriv. Weight (mg/min)", False, "calc"),
+    ColumnDef("time", "Time (min)", "time_min", "Time (min)", True, "raw"),
+    ColumnDef("temp", "Temperature (°C)", "temperature_c", "Temperature (°C)", True, "raw"),
+    ColumnDef("weight", "Weight (mg)", "weight_mg", "Weight (mg)", True, "raw"),
+    ColumnDef("balance_flow", "Balance purge flow (mL/min)", "balance_flow_ml_per_min",
+              "Balance purge flow (mL/min)", False, "raw"),
+    ColumnDef("sample_flow", "Sample purge flow (mL/min)", "sample_flow_ml_per_min",
+              "Sample purge flow (mL/min)", False, "raw"),
+    ColumnDef("gas", "Active gas (1 or 2)", "gas", "Active gas (1 or 2)", False, "raw"),
+    ColumnDef("weight_pct", "Weight (%)", "weight_pct", "Weight (%) of the first recorded weight", True, "calc"),
+    ColumnDef("weight_pct_dry", "Weight (%), dry basis", "weight_dry_pct", "Weight (%), dry basis", False, "calc"),
+    ColumnDef("mass_loss", "Mass loss (%)", "mass_loss_pct", "Mass loss (%)", False, "calc"),
+    ColumnDef("heating_rate", "Heating rate (°C/min)", "heating_rate_c_per_min", "Heating rate (°C/min)", False, "calc"),
+    ColumnDef("dtg_time", "Derivative weight (%/min)", "dtg_pct_per_min", "Derivative weight (%/min)", False, "calc"),
+    ColumnDef("dtg_temp", "Derivative weight (%/°C)", "dtg_pct_per_c", "Derivative weight (%/°C)", False, "calc"),
+    ColumnDef("dtg_mg", "Derivative weight (mg/min)", "dtg_mg_per_min", "Derivative weight (mg/min)", False, "calc"),
 ]
 # Calculated columns that use the smoothing window.
 SMOOTHED_KEYS = ("heating_rate", "dtg_time", "dtg_temp", "dtg_mg")
@@ -77,6 +80,7 @@ class ExportOptions:
     info_residue: bool = False
     info_tloss: bool = False
     tloss_levels: list[float] = field(default_factory=lambda: list(STANDARD_LOSS_LEVELS))
+    mass_loss_intervals: list[tuple[float, float]] = field(default_factory=list)  # empty = off
     output_dir: Path | None = None  # None = next to the source file
 
 
@@ -342,6 +346,82 @@ def _results_lines(run, opts, run_type, run_type_source, cycles) -> list[str]:
     return out
 
 
+def _interval_lines(run, opts, run_type, cycles) -> list[str]:
+    ti, wi = _signal_index(run, "Temperature"), _signal_index(run, "Weight")
+    T = [r[ti] for r in run.rows]
+    W = [r[wi] for r in run.rows]
+    w0 = W[0]
+    w_dry = None
+    if "weight_pct_dry" in opts.columns:
+        w_dry = _weight_at_temperature(T, W, opts.dry_temp_c)
+    flagged = False
+
+    def label(res) -> str:
+        nonlocal flagged
+        star = ""
+        if res.start_used is not None:
+            star, flagged = "*", True
+        return f"{res.t_from:g}-{res.t_to:g}{star}"
+
+    head = ["Interval (°C)", "W start (mg)", "W end (mg)", "Loss (mg)"]
+    widths = [14, 13, 12, 10]
+    out = [""]
+    if run_type == RAMP:
+        out.append("Mass loss between temperatures (whole run)")
+        head += ["Loss (% of initial)"]
+        widths += [20]
+        if w_dry:
+            head += ["Loss (% of dry)"]
+            widths += [16]
+        out.append("  " + head[0].ljust(widths[0]) + " " + " ".join(h.rjust(w) for h, w in zip(head[1:], widths[1:])))
+        for a, b in opts.mass_loss_intervals:
+            r = interval_loss(T, W, a, b)
+            cells = [label(r)]
+            if r.reached:
+                cells += [f"{r.w_from:.4f}", f"{r.w_to:.4f}", f"{r.loss_mg:.4f}", f"{100 * r.loss_mg / w0:.2f}"]
+                if w_dry:
+                    cells.append(f"{100 * r.loss_mg / w_dry:.2f}")
+            else:
+                cells += ["not reached"]
+            out.append("  " + cells[0].ljust(widths[0]) + " " + " ".join(c.rjust(w) for c, w in zip(cells[1:], widths[1:])))
+        out.append("  Loss (% of initial) = 100 x loss / first recorded weight "
+                   f"({w0:.6g} mg), so consecutive intervals add up (25-150 + 150-600 = 25-600).")
+    else:
+        out.append("Mass loss between temperatures (per cycle; % relative to the weight at the start of each cycle)")
+        for a, b in opts.mass_loss_intervals:
+            out.append(f"  Interval {a:g}-{b:g} °C")
+            h = ["Cycle", "W start (mg)", "W end (mg)", "Loss (mg)", "Loss (% of cycle start)"]
+            wd = [7, 13, 12, 10, 24]
+            if w_dry:
+                h.append("Loss (% of dry)")
+                wd.append(16)
+            out.append("  " + " ".join(x.rjust(w) for x, w in zip(h, wd)))
+            for k, (s0, s1) in enumerate(cycles, 1):
+                r = interval_loss(T[s0:s1], W[s0:s1], a, b)
+                cyc = f"{k}{'*' if r.start_used is not None else ''}"
+                if r.start_used is not None:
+                    flagged = True
+                if r.reached:
+                    cells = [cyc, f"{r.w_from:.4f}", f"{r.w_to:.4f}", f"{r.loss_mg:.4f}",
+                             f"{100 * r.loss_mg / W[s0]:.2f}"]
+                    if w_dry:
+                        cells.append(f"{100 * r.loss_mg / w_dry:.2f}")
+                else:
+                    cells = [cyc, "n.r."]
+                out.append("  " + " ".join(c.rjust(w) for c, w in zip(cells, wd)))
+        out.append("  n.r. = interval not reached in that cycle (only the heating part of each cycle is used).")
+    out.append("  W start / W end = weight when the temperature first reaches the From / To temperature while heating;")
+    out.append("  with an isothermal hold at that temperature, the weight at the start of the hold is used.")
+    out.append("  Loss is positive for mass lost, negative for mass gained.")
+    if flagged:
+        out.append("  * The run (or cycle) starts above the From temperature, so its first recorded point is used as start.")
+    if w_dry:
+        out.append(f"  Loss (% of dry) = 100 x loss / weight when the sample first reached {opts.dry_temp_c:g} °C "
+                   f"({w_dry:.6g} mg), the same reference as the dry-basis column. For intervals below "
+                   f"{opts.dry_temp_c:g} °C it is the water lost per 100 mg of dry material.")
+    return out
+
+
 def build_info(
     run: TGARun,
     opts: ExportOptions,
@@ -395,9 +475,13 @@ def build_info(
     wi = _signal_index(run, "Weight")
     if wi is not None and ti is not None:
         lines += _results_lines(run, opts, run_type, run_type_source, cycles)
+        if opts.mass_loss_intervals:
+            lines += _interval_lines(run, opts, run_type, cycles)
 
     lines += ["", "CSV columns"]
-    lines += [f"  {h}" for h in headers]
+    desc = {c.header: c.description for c in COLUMNS}
+    width = max(len(h) for h in headers) + 3
+    lines += [f"  {h:<{width}}{desc.get(h, '')}" for h in headers]
     lines += ["", "Notes"]
     if wi is not None:
         lines.append(f"  Weight (%) = 100 x Weight / first recorded weight ({run.rows[0][wi]:.6g} mg).")
@@ -471,8 +555,8 @@ def export_run(
     headers, table, warnings = build_table(run, opts)
     csv_path, info_path = output_paths(run.path, opts.output_dir, stem)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(csv_path, "w", encoding="utf-8-sig", newline="") as fh:
-        fh.write(",".join(_quote(h) for h in headers) + "\r\n")
+    with open(csv_path, "w", encoding="ascii", newline="") as fh:  # code-friendly: plain ASCII, no BOM
+        fh.write(",".join(headers) + "\r\n")
         for row in table:
             fh.write(",".join(_fmt(v) for v in row) + "\r\n")
     if opts.write_info:
@@ -483,6 +567,3 @@ def export_run(
         info_path = None
     return ExportResult(csv_path, info_path, len(table), len(run.rows), warnings)
 
-
-def _quote(s: str) -> str:
-    return f'"{s}"' if re.search(r'[",\n]', s) else s

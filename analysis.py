@@ -148,5 +148,65 @@ def segment_result(t, T, W, a: int, b: int, levels: list[float]) -> SegmentResul
     )
 
 
+@dataclass
+class IntervalLoss:
+    t_from: float
+    t_to: float
+    w_from: float | None = None
+    w_to: float | None = None
+    start_used: float | None = None  # actual temperature used for 'from' when the segment starts above it
+
+    @property
+    def reached(self) -> bool:
+        return self.w_from is not None and self.w_to is not None
+
+    @property
+    def loss_mg(self) -> float | None:
+        return self.w_from - self.w_to if self.reached else None
+
+
+def _first_upward(T: list[float], W: list[float], target: float, start: int) -> tuple[float, int] | None:
+    """Weight where the temperature first rises through `target` at or after index `start`."""
+    for i in range(max(start, 1), len(T)):
+        if T[i - 1] < target <= T[i]:
+            f = (target - T[i - 1]) / (T[i] - T[i - 1])
+            return W[i - 1] + f * (W[i] - W[i - 1]), i
+    return None
+
+
+def interval_loss(T: list[float], W: list[float], t_from: float, t_to: float) -> IntervalLoss:
+    """Mass lost between the first time the temperature reaches t_from and then t_to (heating only).
+
+    If the segment already starts above t_from (but below t_to), its first point is used
+    instead and recorded in start_used.
+    """
+    res = IntervalLoss(t_from, t_to)
+    if not T:
+        return res
+    if T[0] >= t_from:
+        if T[0] >= t_to:
+            return res
+        res.w_from, i_from, res.start_used = W[0], 0, T[0]
+    else:
+        hit = _first_upward(T, W, t_from, 1)
+        if hit is None:
+            return res
+        res.w_from, i_from = hit
+    hit = _first_upward(T, W, t_to, i_from)
+    if hit is None:
+        res.w_from = None
+        res.start_used = None
+        return res
+    res.w_to = hit[0]
+    return res
+
+
+def parse_temperature(text: str) -> float:
+    v = float(text.replace(",", ".").strip())
+    if not -100 <= v <= 1500:
+        raise ValueError(f"{text} °C is out of range")
+    return v
+
+
 def fmt_level(x: float) -> str:
     return f"{x:g}"

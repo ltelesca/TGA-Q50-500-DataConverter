@@ -11,7 +11,7 @@ import traceback
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from analysis import CYCLING, RAMP, STANDARD_LOSS_LEVELS, parse_loss_levels
+from analysis import CYCLING, RAMP, STANDARD_LOSS_LEVELS, parse_loss_levels, parse_temperature
 from converter import (
     APP_NAME,
     APP_VERSION,
@@ -99,14 +99,19 @@ def settings_path() -> Path:
     return Path(base) / "TGA-Q500-DataConverter" / "settings.json"
 
 
+MAX_ML_STEPS = 5
+
+
 class App(_BaseTk):
     MODES = ("Auto-detect", "Treat all as ramp", "Treat all as cycling")
 
     def __init__(self) -> None:
         super().__init__()
         self.title(f"{APP_NAME}  v{APP_VERSION}")
-        self.geometry("1120x780")
-        self.minsize(1060, 740)
+        # Fit smaller screens (e.g. 1366x768 laptops): the file list shrinks first.
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        self.geometry(f"{min(1120, sw - 40)}x{min(860, max(500, sh - 80))}")
+        self.minsize(640, 420)  # smaller windows scroll
         self.files: dict[str, dict] = {}  # tree item id -> {"path", "run", "error"}
         self.queue: queue.Queue = queue.Queue()
         self.busy = False
@@ -130,10 +135,9 @@ class App(_BaseTk):
         style.configure("Treeview", rowheight=24)
 
     def _build(self) -> None:
-        root = ttk.Frame(self, padding=14)
-        root.pack(fill="both", expand=True)
+        root = self._scroll_container()
         root.columnconfigure(0, weight=1)
-        root.rowconfigure(1, weight=1)
+        root.rowconfigure(1, weight=1, minsize=210)  # keep the file list and Run type selector visible
 
         head = ttk.Frame(root)
         head.grid(row=0, column=0, sticky="ew", pady=(0, 10))
@@ -151,18 +155,18 @@ class App(_BaseTk):
         files.rowconfigure(0, weight=1)
 
         cols = ("file", "sample", "date", "points", "duration", "runtype", "status")
-        tree = ttk.Treeview(files, columns=cols, show="headings", selectmode="extended")
+        tree = ttk.Treeview(files, columns=cols, show="headings", selectmode="extended", height=6)
         for c, text, w, anchor in [
-            ("file", "File", 230, "w"),
-            ("sample", "Sample", 140, "w"),
-            ("date", "Run date", 90, "w"),
-            ("points", "Points", 65, "e"),
-            ("duration", "Duration", 78, "e"),
-            ("runtype", "Run type", 140, "w"),
-            ("status", "Status", 200, "w"),
+            ("file", "File", 200, "w"),
+            ("sample", "Sample", 120, "w"),
+            ("date", "Run date", 85, "w"),
+            ("points", "Points", 60, "e"),
+            ("duration", "Duration", 75, "e"),
+            ("runtype", "Run type", 115, "w"),
+            ("status", "Status", 150, "w"),
         ]:
             tree.heading(c, text=text, anchor=anchor)
-            tree.column(c, width=w, anchor=anchor, stretch=(c in ("file", "status")))
+            tree.column(c, width=w, minwidth=40, anchor=anchor, stretch=(c in ("file", "sample", "status")))
         tree.tag_configure("error", foreground="#b00020")
         tree.tag_configure("done", foreground="#1b7f3b")
         tree.bind("<Double-1>", self._on_double_click)
@@ -174,14 +178,18 @@ class App(_BaseTk):
 
         btns = ttk.Frame(files)
         btns.grid(row=0, column=2, sticky="n", padx=(10, 0))
-        for text, cmd in [
+        grid = ttk.Frame(btns)
+        grid.pack(fill="x")
+        for k, (text, cmd) in enumerate([
             ("Add files…", self.add_files),
             ("Add folder…", self.add_folder),
             ("Remove", self.remove_selected),
             ("Clear list", self.clear),
-        ]:
-            ttk.Button(btns, text=text, command=cmd, width=14).pack(fill="x", pady=2)
-        ttk.Separator(btns).pack(fill="x", pady=(10, 6))
+        ]):
+            ttk.Button(grid, text=text, command=cmd, width=11).grid(
+                row=k // 2, column=k % 2, sticky="ew", padx=(0 if k % 2 == 0 else 4, 0), pady=2
+            )
+        ttk.Separator(btns).pack(fill="x", pady=(8, 6))
         ttk.Label(btns, text="Run type:").pack(anchor="w")
         self.mode_var = tk.StringVar(value=self.MODES[0])
         mode = ttk.Combobox(btns, textvariable=self.mode_var, values=self.MODES, state="readonly", width=16)
@@ -263,10 +271,49 @@ class App(_BaseTk):
             info, text="Custom:", value="custom", variable=self.tloss_mode, command=self._info_state
         )
         self.tloss_cus_rb.grid(row=4, column=0, sticky="w", padx=(44, 0))
-        self.tloss_entry = ttk.Entry(info, textvariable=self.tloss_custom, width=16)
+        self.tloss_entry = ttk.Entry(info, textvariable=self.tloss_custom, width=12)
         self.tloss_entry.grid(row=4, column=1, sticky="w", padx=4)
         self.tloss_hint = ttk.Label(info, text="% (e.g. 2, 5, 20)", style="Sub.TLabel")
         self.tloss_hint.grid(row=4, column=2, sticky="w")
+
+        # Mass loss between temperatures: 1-5 steps, each with a From and To temperature
+        self.ml_var = tk.BooleanVar(value=False)
+        self.ml_steps = tk.StringVar(value="1")
+        mlrow = ttk.Frame(info)
+        mlrow.grid(row=5, column=0, columnspan=3, sticky="w", padx=(22, 0))
+        w = ttk.Checkbutton(
+            mlrow, text="Mass loss between temperatures", variable=self.ml_var, command=self._info_state
+        )
+        w.pack(side="left")
+        self.info_widgets.append(w)
+        self.ml_steps_label = ttk.Label(mlrow, text="  Steps:")
+        self.ml_steps_label.pack(side="left")
+        self.ml_steps_spin = ttk.Spinbox(
+            mlrow, from_=1, to=MAX_ML_STEPS, increment=1, width=3, textvariable=self.ml_steps,
+            command=self._info_state, state="readonly",
+        )
+        self.ml_steps_spin.pack(side="left", padx=4)
+        self.ml_box = ttk.Frame(info)
+        self.ml_box.grid(row=6, column=0, columnspan=3, sticky="w", padx=(44, 0))
+        ttk.Label(info, text="From and To temperature for each step", style="Sub.TLabel").grid(
+            row=7, column=0, columnspan=3, sticky="w", padx=(44, 0)
+        )
+        self.ml_rows = []
+        for k in range(MAX_ML_STEPS):
+            fv, tv = tk.StringVar(), tk.StringVar()
+            cell = ttk.Frame(self.ml_box)
+            widgets = (
+                ttk.Label(cell, text=f"{k + 1}:", width=2),
+                ttk.Entry(cell, textvariable=fv, width=5),
+                ttk.Label(cell, text="to"),
+                ttk.Entry(cell, textvariable=tv, width=5),
+                ttk.Label(cell, text="°C"),
+            )
+            for wd in widgets:
+                wd.pack(side="left", padx=(0, 3))
+            cell.grid(row=k // 2, column=k % 2, sticky="w", padx=(0, 14), pady=1)
+            widgets = widgets + (cell,)
+            self.ml_rows.append((fv, tv, widgets))
 
         opt = ttk.LabelFrame(right, text=" 5. Save options ", style="Section.TLabelframe", padding=8)
         opt.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
@@ -306,6 +353,57 @@ class App(_BaseTk):
         self._sub_state()
         self._info_state()
 
+    def _scroll_container(self) -> ttk.Frame:
+        """Window content inside a canvas, so it scrolls on screens too small for it
+        (e.g. 1024x768). On larger screens the content simply fills the window."""
+        outer = ttk.Frame(self)
+        outer.pack(fill="both", expand=True)
+        outer.rowconfigure(0, weight=1)
+        outer.columnconfigure(0, weight=1)
+        bg = ttk.Style(self).lookup("TFrame", "background") or None
+        canvas = tk.Canvas(outer, highlightthickness=0, borderwidth=0, background=bg)
+        vbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        hbar = ttk.Scrollbar(outer, orient="horizontal", command=canvas.xview)
+        canvas.configure(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        inner = ttk.Frame(canvas, padding=14)
+        item = canvas.create_window(0, 0, window=inner, anchor="nw")
+
+        def relayout(_event=None) -> None:
+            cw, ch = canvas.winfo_width(), canvas.winfo_height()
+            rw, rh = inner.winfo_reqwidth(), inner.winfo_reqheight()
+            w, h = max(cw, rw), max(ch, rh)
+            canvas.itemconfigure(item, width=w, height=h)
+            canvas.configure(scrollregion=(0, 0, w, h))
+            if rh > ch:
+                vbar.grid(row=0, column=1, sticky="ns")
+            else:
+                vbar.grid_remove()
+                canvas.yview_moveto(0)
+            if rw > cw:
+                hbar.grid(row=1, column=0, sticky="ew")
+            else:
+                hbar.grid_remove()
+                canvas.xview_moveto(0)
+
+        canvas.bind("<Configure>", relayout)
+        inner.bind("<Configure>", relayout)
+
+        def wheel(event) -> None:
+            # Scroll the window only when it does not fit and the pointer is not over the file list.
+            if not vbar.winfo_ismapped():
+                return
+            w = self.winfo_containing(event.x_root, event.y_root)
+            if w is not None and str(w).startswith(str(self.tree)):
+                return
+            step = -1 if (getattr(event, "delta", 0) > 0 or getattr(event, "num", 0) == 4) else 1
+            canvas.yview_scroll(step, "units")
+
+        self.bind_all("<MouseWheel>", wheel, add="+")
+        self.bind_all("<Button-4>", wheel, add="+")
+        self.bind_all("<Button-5>", wheel, add="+")
+        return inner
+
     def _info_state(self) -> None:
         on = self.info_var.get()
         for w in self.info_widgets:
@@ -316,6 +414,22 @@ class App(_BaseTk):
         c_on = t_on and self.tloss_mode.get() == "custom"
         self.tloss_entry.configure(state="normal" if c_on else "disabled")
         self.tloss_hint.configure(state="normal" if c_on else "disabled")
+
+        m_on = on and self.ml_var.get()
+        self.ml_steps_label.configure(state="normal" if m_on else "disabled")
+        self.ml_steps_spin.configure(state="readonly" if m_on else "disabled")
+        try:
+            n = max(1, min(MAX_ML_STEPS, int(self.ml_steps.get())))
+        except ValueError:
+            n = 1
+        for k, (_, _, widgets) in enumerate(self.ml_rows):
+            cell = widgets[-1]
+            if k < n:
+                cell.grid()
+                for wd in widgets[:-1]:
+                    wd.configure(state="normal" if m_on else "disabled")
+            else:
+                cell.grid_remove()
 
     # ---------- run type ----------
     def _effective_type(self, info: dict) -> tuple[str, str]:
@@ -532,8 +646,26 @@ class App(_BaseTk):
                     "(for example: 2, 5, 20).",
                 )
                 return None
+        intervals = []
+        if self.info_var.get() and self.ml_var.get():
+            n = int(self.ml_steps.get())
+            for k, (fv, tv, _) in enumerate(self.ml_rows[:n], 1):
+                try:
+                    a, b = parse_temperature(fv.get()), parse_temperature(tv.get())
+                except ValueError:
+                    messagebox.showwarning(
+                        APP_NAME, f"Mass loss step {k}: enter a From and a To temperature in °C (e.g. 25 and 150)."
+                    )
+                    return None
+                if a >= b:
+                    messagebox.showwarning(
+                        APP_NAME, f"Mass loss step {k}: the From temperature must be lower than the To temperature."
+                    )
+                    return None
+                intervals.append((a, b))
         return ExportOptions(
             columns=cols,
+            mass_loss_intervals=intervals,
             info_residue=self.residue_var.get(),
             info_tloss=self.tloss_var.get(),
             tloss_levels=levels,

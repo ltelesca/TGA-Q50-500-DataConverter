@@ -60,6 +60,26 @@ assert tab[300][1] > 0 and tab[300][2] > 0, "derivative of a mass loss must be p
 assert output_paths(Path("a/s.002"), None)[0].name == "s_002.csv"
 assert output_paths(Path("a/6.27 MgCl 1 180"), None)[0].name == "6.27 MgCl 1 180.csv"
 
+# code-friendly CSV headers
+from converter import COLUMNS  # noqa: E402
+import re as _re  # noqa: E402
+for c in COLUMNS:
+    assert _re.fullmatch(r"[a-z][a-z0-9_]*", c.header), f"CSV header not code-friendly: {c.header}"
+
+# mass loss between temperatures: collected from the window, computed per interval
+a.ml_var.set(True)
+a.ml_steps.set("2")
+a._info_state()
+a.ml_rows[0][0].set("25"); a.ml_rows[0][1].set("150")
+a.ml_rows[1][0].set("150"); a.ml_rows[1][1].set("600")
+assert a._collect_options().mass_loss_intervals == [(25.0, 150.0), (150.0, 600.0)]
+from analysis import interval_loss  # noqa: E402
+T = [50 + i for i in range(600)]
+W = [10 - 0.01 * i for i in range(600)]
+r = interval_loss(T, W, 25, 150)
+assert r.reached and abs(r.loss_mg - 1.0) < 1e-9 and r.start_used == 50
+assert not interval_loss(T, W, 700, 800).reached
+
 a.update()
 a.destroy()
 print("GUI smoke test passed")

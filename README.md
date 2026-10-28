@@ -4,7 +4,7 @@ Small Windows app that converts TA Instruments TGA Q500 raw data files
 (`.001`, `.002`, … `.00n`) into CSV files, without going
 through Universal Analysis (UA).
 
-Current version: **0.5.3**
+Current version: **0.6.0**
 
 ## Getting the app
 
@@ -102,8 +102,8 @@ folder chosen under *This folder*):
 
 | File | Contents |
 |---|---|
-| `sample_001.csv` | Plain table, one header row with column names and units, comma-separated, UTF-8 (opens directly in Excel) |
-| `sample_001_info.txt` | Sample, mass, operator, date, instrument, pan/gases, method steps, gas-switch times, run type, point count, notes on how each calculated variable was made, and the results selected in section 4 |
+| `sample_001.csv` | Plain table: one header row with **code-friendly column names** (see below), then numbers only; comma-separated, plain ASCII (opens directly in Excel, Python, R, MATLAB) |
+| `sample_001_info.txt` | Sample, mass, operator, date, instrument, pan/gases, method steps, gas-switch times, run type, point count, the list of CSV columns with their readable names and units, notes on how each calculated variable was made, and the results selected in section 4 |
 
 - The run number is kept in the name, so `sample.001` and `sample.002`
   never overwrite each other. Names without a run number are kept whole
@@ -119,26 +119,37 @@ folder chosen under *This folder*):
 
 ## Columns and variables
 
+**CSV column names are code-friendly**: lowercase, plain ASCII, words
+joined by `_`, unit at the end (`_per_` for rates). They can be used
+directly in code, e.g. `df.temperature_c` (pandas), `d$weight_pct` (R),
+`T.dtg_pct_per_min` (MATLAB), with no renaming and no special
+characters. The app shows readable names, and the info file lists each
+CSV column with its readable name and unit.
+
 ### Section 2 – Columns to export (recorded by the instrument)
 
-| Column | Source |
-|---|---|
-| Time (min), Temperature (°C), Weight (mg) | Raw signals |
-| Balance / Sample Purge Flow (mL/min) | Raw signals |
-| Gas | Active gas (1 or 2), from the gas-switch records stored in the file |
+| In the app | CSV column | Source |
+|---|---|---|
+| Time (min) | `time_min` | Raw signal |
+| Temperature (°C) | `temperature_c` | Raw signal |
+| Weight (mg) | `weight_mg` | Raw signal |
+| Balance purge flow (mL/min) | `balance_flow_ml_per_min` | Raw signal |
+| Sample purge flow (mL/min) | `sample_flow_ml_per_min` | Raw signal |
+| Active gas (1 or 2) | `gas` | From the gas-switch records stored in the file |
 
 ### Section 3 – Variables to calculate
 
 Each ticked variable becomes a column in the CSV.
 
-| Variable | Definition |
-|---|---|
-| Weight (%) | 100 × Weight / first recorded weight |
-| Weight dry basis (%) | 100 × Weight / weight when the sample **first** reaches the reference temperature (default 150 °C; input enabled only when this variable is ticked) |
-| Mass Loss (%) | 100 − Weight (%) |
-| Heating Rate (°C/min) | Slope of Temperature vs time |
-| Deriv. Weight (%/min) and (mg/min) | − slope of Weight vs time |
-| Deriv. Weight (%/°C) | − slope of Weight (%) vs temperature; blank where the heating rate is below 0.1 °C/min (isothermal segments) |
+| In the app | CSV column | Definition |
+|---|---|---|
+| Weight (%) | `weight_pct` | 100 × Weight / first recorded weight |
+| Weight (%), dry basis | `weight_dry_pct` | 100 × Weight / weight when the sample **first** reaches the reference temperature (default 150 °C; input enabled only when this variable is ticked) |
+| Mass loss (%) | `mass_loss_pct` | 100 − Weight (%) |
+| Heating rate (°C/min) | `heating_rate_c_per_min` | Slope of Temperature vs time |
+| Derivative weight (%/min) | `dtg_pct_per_min` | − slope of Weight (%) vs time |
+| Derivative weight (%/°C) | `dtg_pct_per_c` | − slope of Weight (%) vs temperature; blank where the heating rate is below 0.1 °C/min (isothermal segments) |
+| Derivative weight (mg/min) | `dtg_mg_per_min` | − slope of Weight vs time |
 
 **Sign:** derivatives are **positive for mass loss** and negative for
 mass gain, the same convention as Universal Analysis.
@@ -168,8 +179,12 @@ still below any decomposition, reduces this.
 - **Temperature at mass loss** – off by default; when ticked, either the
   standard set **1, 5, 10, 50 %** or a **custom** list typed by the user
   (comma-separated, e.g. `2, 5, 20`).
+- **Mass loss between temperatures** – off by default; when ticked, choose
+  the number of **steps (1–5)** and enter a **From** and **To**
+  temperature for each (e.g. 25 → 150 °C for moisture, 150 → 600 °C for
+  decomposition). See *Mass loss between temperatures* below.
 
-With both results off, the info file still contains the run details,
+With all results off, the info file still contains the run details,
 method steps, gas switches and run type, and for cycling runs the start
 and end time and temperature range of each cycle.
 
@@ -188,12 +203,46 @@ When ticked, results are computed from every recorded point:
 "T at x % loss" is the first time the weight drops x % below the
 reference weight.
 
+### Mass loss between temperatures
+
+For each step, the app takes the weight when the temperature **first
+reaches** the From temperature and the weight when it then **first
+reaches** the To temperature while heating (interpolated between
+points), and reports:
+
+- **Loss (mg)** = weight at From − weight at To (positive = mass lost,
+  negative = mass gained);
+- **Loss (% of initial)** = loss / first recorded weight; consecutive
+  steps add up (25–150 + 150–600 = 25–600);
+- **Loss (% of dry)**, only when *Weight (%), dry basis* is ticked = loss /
+  dry weight (same reference temperature as the dry-basis column). For a
+  step below the reference temperature this is the water lost per 100 mg
+  of dry material.
+
+Ramp runs get one row per step. Cycling runs get one table per step with
+one row per cycle; there the % is relative to the **weight at the start
+of each cycle**, only the heating part of each cycle is used, and "n.r."
+marks cycles that do not cover the step (e.g. 25–150 °C only exists in
+the first cycle of the CaCO₃ runs).
+
+Two details:
+
+- Most runs start above room temperature (often 30–50 °C). If a run or
+  cycle starts above the From temperature but below the To temperature,
+  its **first point** is used as start and the row is marked with `*`.
+- The To temperature must actually be reached: a ramp programmed to
+  800 °C may stop at 797 °C, so 600–800 °C shows "not reached"; use
+  600–790 °C instead.
+
 ## Section 5 – Save options
 
 - **Reduce long runs to ~19,000 points (UA style)** – off by default (see below).
 - **Save CSV files to:** *Same folder as each file* (default) or *This
   folder* (type a path or use *Browse…*). Saving directly on the Desktop
   is blocked.
+
+On small screens (e.g. 1024×768) the window shows scroll bars instead of
+cutting anything off.
 
 ## Full data vs. Universal Analysis
 
@@ -259,7 +308,7 @@ Reverse-engineered from Q Series files:
 GitHub Actions builds the three `.exe` files on every push to `main`
 (Windows 10/11 with Python 3.12; Windows 7 64-bit and 32-bit with
 Python 3.8 and PyInstaller 5.13.2) and runs the checks in each. Pushing a
-tag such as `v0.5.3` also publishes them on the **Releases** page.
+tag such as `v0.6.0` also publishes them on the **Releases** page.
 
 To build locally (Windows, Python 3.8 or newer; use 3.8 for Windows 7):
 
@@ -272,6 +321,7 @@ pyinstaller --onefile --windowed --name TGA-Q500-DataConverter --collect-all tki
 
 | Version | Changes |
 |---|---|
+| 0.6.0 | Code-friendly CSV column names (`time_min`, `temperature_c`, …) in plain ASCII, readable names listed in the info file; mass loss between temperatures (1–5 steps, ramp and per cycle, % of initial and % of dry); window scrolls on small screens; file-list buttons in a 2×2 grid |
 | 0.5.3 | Section names: "Variables to calculate" (3) and "Save options" (5) |
 | 0.5.2 | Info file: residue and temperature at mass loss off by default |
 | 0.5.1 | Windows 7 builds (32- and 64-bit); Python 3.8 compatibility fix |
