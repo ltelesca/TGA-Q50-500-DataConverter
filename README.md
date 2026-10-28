@@ -1,7 +1,7 @@
 # TGA Q500 Data Converter
 
 Small Windows app that converts TA Instruments TGA Q500 raw data files
-(`.001`, `.002`, … or any other name) into CSV files, without going
+(`.001`, `.002`, … `.00n`) into CSV files, without going
 through Universal Analysis (UA).
 
 Current version: **0.5.3**
