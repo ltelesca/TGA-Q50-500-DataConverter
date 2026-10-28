@@ -14,9 +14,10 @@ assert app.DND_FILES is not None, "drag-and-drop library failed to load"
 assert app.App._options is app._BaseTk._options, "App overrides tkinter's _options"
 opts = a._collect_options()
 assert opts is not None and opts.columns, "options not collected"
-assert opts.info_residue and opts.info_tloss and opts.tloss_levels == [1, 5, 10, 50]
+assert opts.write_info and not opts.info_residue and not opts.info_tloss, "info-file defaults changed"
 
 # custom mass-loss list
+a.tloss_var.set(True)
 a.tloss_mode.set("custom")
 a.tloss_custom.set("20, 2; 5")
 assert a._collect_options().tloss_levels == [2, 5, 20]

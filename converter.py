@@ -21,7 +21,7 @@ from analysis import (
 from tga_reader import TGARun, has_run_number
 
 APP_NAME = "TGA Q500 Data Converter"
-APP_VERSION = "0.5.1"
+APP_VERSION = "0.5.2"
 
 UA_POINT_TARGET = 19000
 UA_REDUCE_ABOVE = 20000  # UA leaves runs of up to ~19,800 points untouched; 21,450 were reduced
@@ -74,8 +74,8 @@ class ExportOptions:
     write_info: bool = True
     dtg_window_s: float = 10.0
     dry_temp_c: float = 150.0
-    info_residue: bool = True
-    info_tloss: bool = True
+    info_residue: bool = False
+    info_tloss: bool = False
     tloss_levels: list[float] = field(default_factory=lambda: list(STANDARD_LOSS_LEVELS))
     output_dir: Path | None = None  # None = next to the source file
 

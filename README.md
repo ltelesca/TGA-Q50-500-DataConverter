@@ -4,7 +4,7 @@ Small Windows app that converts TA Instruments TGA Q500 raw data files
 (`.001`, `.002`, … `.999`) into CSV files, without going through
 Universal Analysis (UA).
 
-Current version: **0.5.1**
+Current version: **0.5.2**
 
 ## Getting the app
 
@@ -61,7 +61,7 @@ instrument PC). Every time it opens:
 - Run type: **Auto-detect**
 - Columns to export: **Time, Temperature, Weight** on; purge flows and gas off
 - Columns to calculate: **Weight (%)** on; everything else off
-- Info file **on**, with final residue and temperatures at 1, 5, 10, 50 % mass loss
+- Info file **on**; final residue and temperature at mass loss **off** (tick them to add results)
 - Reduction **off**, output to **the same folder as each file**
 
 ## Run type: ramp or cycling
@@ -159,8 +159,8 @@ still below any decomposition, reduces this.
 ### Info file (section 4)
 
 - **Write info file** – on by default; the options below are greyed out when it is off.
-- **Final residue and mass loss**
-- **Temperature at mass loss** – either the standard set **1, 5, 10, 50 %**
+- **Final residue and mass loss** – off by default
+- **Temperature at mass loss** – off by default; when ticked, either the standard set **1, 5, 10, 50 %**
   or a **custom** list typed by the user (comma-separated, e.g. `2, 5, 20`).
 
 Results are computed from every recorded point:
@@ -255,6 +255,7 @@ pyinstaller --onefile --windowed --name TGA-Q500-DataConverter --collect-all tki
 
 | Version | Changes |
 |---|---|
+| 0.5.2 | Info file: residue and temperature at mass loss off by default |
 | 0.5.1 | Windows 7 builds (32- and 64-bit); Python 3.8 compatibility fix |
 | 0.5.0 | Raw files recognised by content (names with dots / no extension); derivative sign as in UA (positive = loss) and %/°C computed against temperature; cycles only where the method programmes a cool-down (fixes Hi-Res runs); unique output names within a batch; faster derivatives |
 | 0.4.0 | Run type per file (auto-detected ramp / cycling, double-click to change, all-files selector); per-cycle results; new section 4 "Info file" (residue, T at 1/5/10/50 % or custom list); Options becomes section 5 |
