@@ -4,7 +4,7 @@ Small Windows app that converts TA Instruments TGA Q500 raw data files
 (`.001`, `.002`, … `.00n`) into CSV files, without going
 through Universal Analysis (UA).
 
-Current version: **0.6.0**
+Current version: **0.6.1**
 
 ## Getting the app
 
@@ -126,6 +126,15 @@ directly in code, e.g. `df.temperature_c` (pandas), `d$weight_pct` (R),
 characters. The app shows readable names, and the info file lists each
 CSV column with its readable name and unit.
 
+**Every file gets the same columns** for the same settings, so one
+analysis script works for a whole batch. If the instrument did not
+record a signal (a Q50 set up to record only time, temperature and
+weight has no purge flows; a method without gas selection has no active
+gas), the column is still there but its cells are **empty** (not "NA":
+empty cells are read as missing values by Excel, pandas, R and MATLAB
+alike). Nothing fails; the info file marks the column, e.g.
+`balance_flow_ml_per_min  Balance purge flow (mL/min)  EMPTY: not recorded by this instrument`.
+
 ### Section 2 – Columns to export (recorded by the instrument)
 
 | In the app | CSV column | Source |
@@ -241,8 +250,11 @@ Two details:
   folder* (type a path or use *Browse…*). Saving directly on the Desktop
   is blocked.
 
-On small screens (e.g. 1024×768) the window shows scroll bars instead of
-cutting anything off.
+The window opens at the size its content needs, taking the Windows
+display scaling (100 %, 125 %, 150 %, …) into account, and centred on the
+screen; it grows when you add mass-loss steps. Only when the screen is
+too small for everything (e.g. a 1366×768 laptop with all five mass-loss
+steps) does it use the whole screen and show a scroll bar.
 
 ## Full data vs. Universal Analysis
 
@@ -276,6 +288,16 @@ holds, step-wise ramps, Hi-Res, CaCO₃ cycling, 0.5 s and 2 s sampling,
   0.7 °C; the remaining differences are in %/°C around isothermal holds,
   where the value is undefined (left blank here).
 
+Also tested on **62 runs from a TA Q50** at another lab (same software
+version, recording only time, temperature and weight; runs up to 15 h /
+107,780 points): all convert with every option; **48 UA text exports**
+match point for point and 14 more were reduced by UA; 14 UA derivative
+columns agree in peak temperature to within 1.5 °C. A batch mixing Q500
+and Q50 files gives identical columns, with the Q50's flow columns empty.
+
+The Windows 7 builds (Python 3.8) and the Windows 10/11 build produce
+byte-identical CSV and info files on all 666 test runs.
+
 ## Troubleshooting
 
 Unexpected errors are shown in a message box and appended to
@@ -308,7 +330,7 @@ Reverse-engineered from Q Series files:
 GitHub Actions builds the three `.exe` files on every push to `main`
 (Windows 10/11 with Python 3.12; Windows 7 64-bit and 32-bit with
 Python 3.8 and PyInstaller 5.13.2) and runs the checks in each. Pushing a
-tag such as `v0.6.0` also publishes them on the **Releases** page.
+tag such as `v0.6.1` also publishes them on the **Releases** page.
 
 To build locally (Windows, Python 3.8 or newer; use 3.8 for Windows 7):
 
@@ -321,6 +343,7 @@ pyinstaller --onefile --windowed --name TGA-Q500-DataConverter --collect-all tki
 
 | Version | Changes |
 |---|---|
+| 0.6.1 | Window opens sized to its content and to the Windows display scaling (sharp text at 125/150 %), grows when mass-loss steps are added, scroll bar only when the screen is too small; signals the instrument did not record give empty columns, explained next to each column in the info file; tested on Q50 data |
 | 0.6.0 | Code-friendly CSV column names (`time_min`, `temperature_c`, …) in plain ASCII, readable names listed in the info file; mass loss between temperatures (1–5 steps, ramp and per cycle, % of initial and % of dry); window scrolls on small screens; file-list buttons in a 2×2 grid |
 | 0.5.3 | Section names: "Variables to calculate" (3) and "Save options" (5) |
 | 0.5.2 | Info file: residue and temperature at mass loss off by default |

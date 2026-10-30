@@ -53,7 +53,7 @@ from tga_reader import TGARun  # noqa: E402
 rows = [(i / 120, 20 + i / 12, 10 - i / 1200, 40.0, 60.0) for i in range(600)]
 run = TGARun(Path("x.001"), [], ["Time (min)", "Temperature (°C)", "Weight (mg)",
              "Balance Purge Flow (mL/min)", "Sample Purge Flow (mL/min)"], rows, [None] * 600)
-_, tab, _ = build_table(run, ExportOptions(columns=["time", "dtg_time", "dtg_temp"]))
+_, tab, _, _ = build_table(run, ExportOptions(columns=["time", "dtg_time", "dtg_temp"]))
 assert tab[300][1] > 0 and tab[300][2] > 0, "derivative of a mass loss must be positive"
 
 # output names: run number kept, dotted names kept whole

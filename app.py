@@ -7,6 +7,7 @@ import queue
 import sys
 import threading
 import tkinter as tk
+import tkinter.font as tkfont
 import traceback
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -34,6 +35,37 @@ try:  # drag-and-drop support (bundled in the .exe); the app still works without
 except Exception:  # pragma: no cover
     DND_FILES = None
     _BaseTk = tk.Tk
+
+
+def enable_dpi_awareness() -> None:
+    """Tell Windows the app handles display scaling itself, so text stays sharp at
+    125/150 % instead of being stretched as a bitmap. Must run before the window exists."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)  # Windows 8.1+
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()  # Windows 7
+    except Exception:
+        pass
+
+
+def work_area(root: tk.Misc) -> tuple[int, int, int, int]:
+    """Usable screen area (x, y, width, height), excluding the taskbar where possible."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            rect = wintypes.RECT()
+            if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):  # SPI_GETWORKAREA
+                return rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top
+        except Exception:
+            pass
+    return 0, 0, root.winfo_screenwidth(), root.winfo_screenheight() - 60
 
 
 def desktop_dirs() -> list[Path]:
@@ -108,10 +140,13 @@ class App(_BaseTk):
     def __init__(self) -> None:
         super().__init__()
         self.title(f"{APP_NAME}  v{APP_VERSION}")
-        # Fit smaller screens (e.g. 1366x768 laptops): the file list shrinks first.
-        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        self.geometry(f"{min(1120, sw - 40)}x{min(860, max(500, sh - 80))}")
-        self.minsize(640, 420)  # smaller windows scroll
+        # Display scaling: 1.0 at 100 %, 1.25 at 125 %, ... (Tk reports points per pixel x 72/96).
+        try:
+            self.ui_scale = max(1.0, float(self.tk.call("tk", "scaling")) * 72 / 96)
+        except (tk.TclError, ValueError):
+            self.ui_scale = 1.0
+        self.withdraw()  # build hidden, then open at the right size
+        self.minsize(self.px(640), self.px(420))  # smaller windows scroll
         self.files: dict[str, dict] = {}  # tree item id -> {"path", "run", "error"}
         self.queue: queue.Queue = queue.Queue()
         self.busy = False
@@ -120,6 +155,47 @@ class App(_BaseTk):
         self._build()
         self._enable_drop()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        # The file list may shrink, but never below the buttons / Run type panel beside it.
+        self.update_idletasks()
+        self._files_frame.rowconfigure(0, weight=1, minsize=self._btns.winfo_reqheight())
+        self._fit_window(initial=True)
+        self.deiconify()
+        self._shown = True
+
+    def px(self, n: float) -> int:
+        """Pixel size scaled for the Windows display setting."""
+        return int(round(n * self.ui_scale))
+
+    def _fit_window(self, initial: bool = False) -> None:
+        """Size the window to its content, clamped to the screen; maximise if it cannot fit.
+        Later calls only grow the window (e.g. when mass-loss steps are added)."""
+        self.update_idletasks()
+        self._relayout()  # content size may have changed without a resize event
+        need_w = self._inner.winfo_reqwidth() + self.px(4)
+        need_h = self._inner.winfo_reqheight() + self.px(4)
+        x0, y0, aw, ah = work_area(self)
+        frame = self.px(40)  # title bar and borders
+        if need_h > ah - frame:
+            need_w += self.px(18)  # room for the vertical scroll bar
+        fits = need_w <= aw - self.px(16) and need_h <= ah - frame
+        if not initial:
+            if self.state() == "zoomed":
+                return
+            cur_w, cur_h = self.winfo_width(), self.winfo_height()
+            if need_w <= cur_w and need_h <= cur_h:
+                return
+            need_w, need_h = max(need_w, cur_w), max(need_h, cur_h)
+        w = min(need_w, aw - self.px(16))
+        h = min(need_h, ah - frame)
+        if initial and not fits and sys.platform == "win32":
+            self.geometry(f"{w}x{h}+{x0}+{y0}")
+            self.state("zoomed")  # use the whole screen; scroll bars cover the rest
+            return
+        x = x0 + max(0, (aw - w) // 2) if initial else self.winfo_x()
+        y = y0 + max(0, (ah - frame - h) // 2) if initial else min(self.winfo_y(), y0 + max(0, ah - frame - h))
+        self.geometry(f"{w}x{h}+{x}+{y}")
+        self.update_idletasks()
+        self._relayout()
 
     # ---------- layout ----------
     def _style(self) -> None:
@@ -131,16 +207,17 @@ class App(_BaseTk):
         style.configure("Title.TLabel", font=("Segoe UI", 15, "bold"))
         style.configure("Sub.TLabel", foreground="#555555")
         style.configure("Section.TLabelframe.Label", font=("Segoe UI", 10, "bold"))
-        style.configure("Accent.TButton", font=("Segoe UI", 10, "bold"), padding=(18, 6))
-        style.configure("Treeview", rowheight=24)
+        style.configure("Accent.TButton", font=("Segoe UI", 10, "bold"), padding=(self.px(18), self.px(6)))
+        linespace = tkfont.nametofont("TkDefaultFont").metrics("linespace")
+        style.configure("Treeview", rowheight=max(self.px(24), linespace + self.px(8)))
 
     def _build(self) -> None:
         root = self._scroll_container()
         root.columnconfigure(0, weight=1)
-        root.rowconfigure(1, weight=1, minsize=210)  # keep the file list and Run type selector visible
+        root.rowconfigure(1, weight=1, minsize=self.px(180))  # keep the file list and Run type selector visible
 
         head = ttk.Frame(root)
-        head.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        head.grid(row=0, column=0, sticky="ew", pady=(0, self.px(6)))
         ttk.Label(head, text="TGA Q500 Data Converter", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             head,
@@ -149,7 +226,7 @@ class App(_BaseTk):
         ).pack(anchor="w")
 
         # --- files ---
-        files = ttk.LabelFrame(root, text=" 1. Files ", style="Section.TLabelframe", padding=8)
+        files = ttk.LabelFrame(root, text=" 1. Files ", style="Section.TLabelframe", padding=(self.px(8), self.px(4), self.px(8), self.px(6)))
         files.grid(row=1, column=0, sticky="nsew")
         files.columnconfigure(0, weight=1)
         files.rowconfigure(0, weight=1)
@@ -166,7 +243,8 @@ class App(_BaseTk):
             ("status", "Status", 150, "w"),
         ]:
             tree.heading(c, text=text, anchor=anchor)
-            tree.column(c, width=w, minwidth=40, anchor=anchor, stretch=(c in ("file", "sample", "status")))
+            tree.column(c, width=self.px(w), minwidth=self.px(40), anchor=anchor,
+                        stretch=(c in ("file", "sample", "status")))
         tree.tag_configure("error", foreground="#b00020")
         tree.tag_configure("done", foreground="#1b7f3b")
         tree.bind("<Double-1>", self._on_double_click)
@@ -178,6 +256,7 @@ class App(_BaseTk):
 
         btns = ttk.Frame(files)
         btns.grid(row=0, column=2, sticky="n", padx=(10, 0))
+        self._files_frame, self._btns = files, btns
         grid = ttk.Frame(btns)
         grid.pack(fill="x")
         for k, (text, cmd) in enumerate([
@@ -205,14 +284,14 @@ class App(_BaseTk):
 
         # --- columns + options ---
         mid = ttk.Frame(root)
-        mid.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        mid.grid(row=2, column=0, sticky="ew", pady=(self.px(6), 0))
         for i, w in enumerate((2, 3, 4)):
             mid.columnconfigure(i, weight=w)
         self.col_vars: dict[str, tk.BooleanVar] = {}
 
-        rawbox = ttk.LabelFrame(mid, text=" 2. Columns to export ", style="Section.TLabelframe", padding=8)
+        rawbox = ttk.LabelFrame(mid, text=" 2. Columns to export ", style="Section.TLabelframe", padding=(self.px(8), self.px(4), self.px(8), self.px(6)))
         rawbox.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        calcbox = ttk.LabelFrame(mid, text=" 3. Variables to calculate ", style="Section.TLabelframe", padding=8)
+        calcbox = ttk.LabelFrame(mid, text=" 3. Variables to calculate ", style="Section.TLabelframe", padding=(self.px(8), self.px(4), self.px(8), self.px(6)))
         calcbox.grid(row=0, column=1, sticky="nsew", padx=(0, 8))
         self.window_var = tk.StringVar(value="10")
         self.dry_var = tk.StringVar(value="150")
@@ -242,7 +321,7 @@ class App(_BaseTk):
         right.grid(row=0, column=2, sticky="nsew")
         right.columnconfigure(0, weight=1)
 
-        info = ttk.LabelFrame(right, text=" 4. Info file ", style="Section.TLabelframe", padding=8)
+        info = ttk.LabelFrame(right, text=" 4. Info file ", style="Section.TLabelframe", padding=(self.px(8), self.px(4), self.px(8), self.px(6)))
         info.grid(row=0, column=0, sticky="ew")
         self.info_var = tk.BooleanVar(value=True)
         self.residue_var = tk.BooleanVar(value=False)
@@ -315,8 +394,8 @@ class App(_BaseTk):
             widgets = widgets + (cell,)
             self.ml_rows.append((fv, tv, widgets))
 
-        opt = ttk.LabelFrame(right, text=" 5. Save options ", style="Section.TLabelframe", padding=8)
-        opt.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+        opt = ttk.LabelFrame(right, text=" 5. Save options ", style="Section.TLabelframe", padding=(self.px(8), self.px(4), self.px(8), self.px(6)))
+        opt.grid(row=1, column=0, sticky="nsew", pady=(self.px(6), 0))
         right.rowconfigure(1, weight=1)
         opt.columnconfigure(1, weight=1)
         self.reduce_var = tk.BooleanVar(value=False)
@@ -326,7 +405,7 @@ class App(_BaseTk):
         ttk.Checkbutton(
             opt, text=f"Reduce long runs to ~{UA_POINT_TARGET:,} points (UA style)", variable=self.reduce_var
         ).grid(row=0, column=0, columnspan=3, sticky="w")
-        ttk.Label(opt, text="Save CSV files to:").grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        ttk.Label(opt, text="Save CSV files to:").grid(row=1, column=0, columnspan=3, sticky="w", pady=(self.px(2), 0))
         ttk.Radiobutton(
             opt, text="Same folder as each file", value="same", variable=self.outmode_var, command=self._out_mode
         ).grid(row=2, column=0, columnspan=3, sticky="w")
@@ -340,7 +419,7 @@ class App(_BaseTk):
 
         # --- bottom bar ---
         bottom = ttk.Frame(root)
-        bottom.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        bottom.grid(row=3, column=0, sticky="ew", pady=(self.px(8), 0))
         bottom.columnconfigure(1, weight=1)
         self.progress = ttk.Progressbar(bottom, mode="determinate")
         self.progress.grid(row=0, column=1, sticky="ew", padx=(0, 12))
@@ -366,28 +445,38 @@ class App(_BaseTk):
         hbar = ttk.Scrollbar(outer, orient="horizontal", command=canvas.xview)
         canvas.configure(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
         canvas.grid(row=0, column=0, sticky="nsew")
-        inner = ttk.Frame(canvas, padding=14)
+        inner = ttk.Frame(canvas, padding=(self.px(12), self.px(8), self.px(12), self.px(10)))
+        self._inner = inner
         item = canvas.create_window(0, 0, window=inner, anchor="nw")
 
         def relayout(_event=None) -> None:
-            cw, ch = canvas.winfo_width(), canvas.winfo_height()
+            # Decide on scroll bars from the whole window area, not the area left
+            # inside existing bars (otherwise a bar, once shown, never goes away).
+            ow, oh = outer.winfo_width(), outer.winfo_height()
             rw, rh = inner.winfo_reqwidth(), inner.winfo_reqheight()
+            bw = vbar.winfo_reqwidth()
+            need_v = rh > oh
+            need_h = rw > ow - (bw if need_v else 0)
+            need_v = rh > oh - (hbar.winfo_reqheight() if need_h else 0)
+            for bar, need, place in ((vbar, need_v, dict(row=0, column=1, sticky="ns")),
+                                     (hbar, need_h, dict(row=1, column=0, sticky="ew"))):
+                if need and not bar.winfo_ismapped():
+                    bar.grid(**place)
+                elif not need and bar.winfo_ismapped():
+                    bar.grid_remove()
+            cw = ow - (bw if need_v else 0)
+            ch = oh - (hbar.winfo_reqheight() if need_h else 0)
             w, h = max(cw, rw), max(ch, rh)
             canvas.itemconfigure(item, width=w, height=h)
             canvas.configure(scrollregion=(0, 0, w, h))
-            if rh > ch:
-                vbar.grid(row=0, column=1, sticky="ns")
-            else:
-                vbar.grid_remove()
+            if not need_v:
                 canvas.yview_moveto(0)
-            if rw > cw:
-                hbar.grid(row=1, column=0, sticky="ew")
-            else:
-                hbar.grid_remove()
+            if not need_h:
                 canvas.xview_moveto(0)
 
-        canvas.bind("<Configure>", relayout)
+        outer.bind("<Configure>", relayout)
         inner.bind("<Configure>", relayout)
+        self._relayout = relayout
 
         def wheel(event) -> None:
             # Scroll the window only when it does not fit and the pointer is not over the file list.
@@ -430,6 +519,8 @@ class App(_BaseTk):
                     wd.configure(state="normal" if m_on else "disabled")
             else:
                 cell.grid_remove()
+        if getattr(self, "_shown", False):
+            self._fit_window()
 
     # ---------- run type ----------
     def _effective_type(self, info: dict) -> tuple[str, str]:
@@ -785,6 +876,7 @@ class App(_BaseTk):
 
 
 def main() -> None:
+    enable_dpi_awareness()
     app = App()
     # Files passed on the command line (e.g. dropped onto the .exe) are added at start.
     args = [Path(a) for a in sys.argv[1:] if Path(a).is_file()]

@@ -21,7 +21,7 @@ from analysis import (
 from tga_reader import TGARun, has_run_number
 
 APP_NAME = "TGA Q500 Data Converter"
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.6.1"
 
 UA_POINT_TARGET = 19000
 UA_REDUCE_ABOVE = 20000  # UA leaves runs of up to ~19,800 points untouched; 21,450 were reduced
@@ -180,8 +180,16 @@ def _reduce_blocks(n: int, event_rows: list[int], target: int) -> list[tuple[int
     return blocks
 
 
-def build_table(run: TGARun, opts: ExportOptions) -> tuple[list[str], list[list[float | None]], list[str]]:
+def build_table(
+    run: TGARun, opts: ExportOptions
+) -> tuple[list[str], list[list[float | None]], list[str], dict[str, str]]:
+    """Returns headers, rows, warnings (short messages) and a note per column key.
+
+    Every file gets the same columns for the same options; a column whose signal
+    the file does not contain is written with empty cells and noted, never an error.
+    """
     warnings: list[str] = []
+    notes: dict[str, str] = {}
     rows = run.rows
     n = len(rows)
     cols: dict[str, list[float | None]] = {}
@@ -205,9 +213,8 @@ def build_table(run: TGARun, opts: ExportOptions) -> tuple[list[str], list[list[
     if "weight_pct_dry" in opts.columns:
         w_dry = _weight_at_temperature(T, W, opts.dry_temp_c)
         if w_dry is None or w_dry == 0:
-            warnings.append(
-                f"sample never reached {opts.dry_temp_c:g} °C; Weight dry basis column left blank"
-            )
+            warnings.append(f"sample never reached {opts.dry_temp_c:g} °C; dry-basis column empty")
+            notes["weight_pct_dry"] = f"EMPTY: sample never reached {opts.dry_temp_c:g} °C"
             cols["weight_pct_dry"] = [None] * n
         else:
             cols["weight_pct_dry"] = [100.0 * w / w_dry for w in W]
@@ -215,7 +222,8 @@ def build_table(run: TGARun, opts: ExportOptions) -> tuple[list[str], list[list[
     for key in ("balance_flow", "sample_flow"):
         if key in opts.columns:
             if idx[key] is None:
-                warnings.append(f"'{SIGNAL_PREFIX[key]}' not recorded in this file; column left blank")
+                warnings.append(f"'{SIGNAL_PREFIX[key]}' not recorded by this instrument; column empty")
+                notes[key] = "EMPTY: not recorded by this instrument"
                 cols[key] = [None] * n
             else:
                 cols[key] = [r[idx[key]] for r in rows]
@@ -241,7 +249,8 @@ def build_table(run: TGARun, opts: ExportOptions) -> tuple[list[str], list[list[
     if "gas" in opts.columns:
         cols["gas"] = [float(g) if g is not None else None for g in run.gas]
         if all(g is None for g in run.gas):
-            warnings.append("active gas unknown (no gas selection in method); Gas column left blank")
+            warnings.append("active gas unknown (no gas selection in method); gas column empty")
+            notes["gas"] = "EMPTY: method has no gas selection"
 
     keys = [k for k in COLUMN_KEYS if k in opts.columns]
     if not keys:
@@ -262,8 +271,10 @@ def build_table(run: TGARun, opts: ExportOptions) -> tuple[list[str], list[list[
     else:
         out = [list(r) for r in zip(*data)]
 
+    if "dtg_temp" in keys:
+        notes.setdefault("dtg_temp", f"blank where the heating rate is below {DTG_MIN_HEATING_RATE} °C/min")
     headers = [next(c.header for c in COLUMNS if c.key == k) for k in keys]
-    return headers, out, warnings
+    return headers, out, warnings, notes
 
 
 def _fmt(v: float | None) -> str:
@@ -431,6 +442,7 @@ def build_info(
     run_type: str = RAMP,
     run_type_source: str = "detected automatically",
     cycles: list[tuple[int, int]] | None = None,
+    notes: dict[str, str] | None = None,
 ) -> str:
     if cycles is None:
         cycles = [(0, len(run.rows))]
@@ -479,9 +491,16 @@ def build_info(
             lines += _interval_lines(run, opts, run_type, cycles)
 
     lines += ["", "CSV columns"]
-    desc = {c.header: c.description for c in COLUMNS}
+    notes = notes or {}
+    by_header = {c.header: c for c in COLUMNS}
     width = max(len(h) for h in headers) + 3
-    lines += [f"  {h:<{width}}{desc.get(h, '')}" for h in headers]
+    dwidth = max(len(by_header[h].description) for h in headers if h in by_header) + 3
+    for h in headers:
+        c = by_header.get(h)
+        note = notes.get(c.key, "") if c else ""
+        lines.append(f"  {h:<{width}}{(c.description if c else ''):<{dwidth}}{note}".rstrip())
+    if any(v.startswith("EMPTY") for v in notes.values()):
+        lines.append("  (EMPTY columns are kept so that every file has the same columns; their cells are empty.)")
     lines += ["", "Notes"]
     if wi is not None:
         lines.append(f"  Weight (%) = 100 x Weight / first recorded weight ({run.rows[0][wi]:.6g} mg).")
@@ -504,10 +523,6 @@ def build_info(
                 "  Derivative weight sign: positive = mass loss, negative = mass gain "
                 "(same convention as Universal Analysis)."
             )
-        if "dtg_temp" in opts.columns:
-            lines.append(
-                f"  %/°C is left blank where the heating rate is below {DTG_MIN_HEATING_RATE} °C/min (isothermal segments)."
-            )
     if run_type == CYCLING:
         lines.append(
             f"  Cycles: a new cycle starts where heating resumes after the temperature has dropped at least "
@@ -522,8 +537,7 @@ def build_info(
         )
     else:
         lines.append("  Full data: every recorded point is included.")
-    for w in warnings:
-        lines.append(f"  WARNING: {w}")
+    # Column-related warnings are shown next to the column above.
     return "\r\n".join(lines) + "\r\n"
 
 
@@ -552,7 +566,7 @@ def export_run(
         cycles = cycles_for(run)
     if run_type is None:
         run_type = CYCLING if len(cycles) > 1 else RAMP
-    headers, table, warnings = build_table(run, opts)
+    headers, table, warnings, notes = build_table(run, opts)
     csv_path, info_path = output_paths(run.path, opts.output_dir, stem)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     with open(csv_path, "w", encoding="ascii", newline="") as fh:  # code-friendly: plain ASCII, no BOM
@@ -560,7 +574,7 @@ def export_run(
         for row in table:
             fh.write(",".join(_fmt(v) for v in row) + "\r\n")
     if opts.write_info:
-        text = build_info(run, opts, len(table), headers, warnings, run_type, run_type_source, cycles)
+        text = build_info(run, opts, len(table), headers, warnings, run_type, run_type_source, cycles, notes)
         with open(info_path, "w", encoding="utf-8-sig", newline="") as fh:  # Path.write_text(newline=) needs 3.10
             fh.write(text)
     else:
