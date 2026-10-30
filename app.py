@@ -131,7 +131,7 @@ def settings_path() -> Path:
     return Path(base) / "TGA-Q500-DataConverter" / "settings.json"
 
 
-MAX_ML_STEPS = 5
+MAX_ML_STEPS = 6
 
 
 class App(_BaseTk):
@@ -210,6 +210,12 @@ class App(_BaseTk):
         style.configure("Accent.TButton", font=("Segoe UI", 10, "bold"), padding=(self.px(18), self.px(6)))
         linespace = tkfont.nametofont("TkDefaultFont").metrics("linespace")
         style.configure("Treeview", rowheight=max(self.px(24), linespace + self.px(8)))
+        # Tk 8.6.9 (Python 3.8, used for the Windows 7 builds) ignores Treeview tag colours
+        # because of its default style map; drop the '!disabled'/'!selected' entries so the
+        # green/red status rows show. Harmless on newer Tk.
+        for opt in ("foreground", "background"):
+            entries = [e for e in style.map("Treeview", query_opt=opt) if e[:2] != ("!disabled", "!selected")]
+            style.map("Treeview", **{opt: entries})
 
     def _build(self) -> None:
         root = self._scroll_container()
@@ -355,7 +361,7 @@ class App(_BaseTk):
         self.tloss_hint = ttk.Label(info, text="% (e.g. 2, 5, 20)", style="Sub.TLabel")
         self.tloss_hint.grid(row=4, column=2, sticky="w")
 
-        # Mass loss between temperatures: 1-5 steps, each with a From and To temperature
+        # Mass loss between temperatures: 1-6 steps, each with a From and To temperature
         self.ml_var = tk.BooleanVar(value=False)
         self.ml_steps = tk.StringVar(value="1")
         mlrow = ttk.Frame(info)
@@ -838,7 +844,7 @@ class App(_BaseTk):
                 note = "Done" if res.csv_path.stem == output_paths(v["path"], None)[0].stem else f"Done → {res.csv_path.name}"
                 if res.points_written != res.points_raw:
                     note += f" (reduced to {res.points_written:,} pts)"
-                if res.warnings:
+                if res.warnings and res.info_path is not None:
                     note += "  ⚠ see info file"
                 self.queue.put(("done", iid, note))
             except (ConversionError, OSError) as e:

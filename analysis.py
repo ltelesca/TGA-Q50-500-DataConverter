@@ -201,6 +201,83 @@ def interval_loss(T: list[float], W: list[float], t_from: float, t_to: float) ->
     return res
 
 
+# Dry-basis reference. An isothermal hold counts when the method programmes one
+# ("Isothermal for N min") at the reference temperature (within HOLD_TOL_C), and it
+# is the first time the run gets there. The data then give where the hold ends:
+# where the temperature starts moving again (rate above RESUME_RATE_C_MIN) before
+# leaving a +-HOLD_EXIT_C band around the reference.
+HOLD_TOL_C = 3.0
+HOLD_EXIT_C = 10.0
+_ISOTHERMAL = re.compile(r"Isothermal for ([\d.]+) min")
+
+
+@dataclass
+class DryReference:
+    target: float
+    weight: float | None = None       # None = never reached
+    hold: bool = False                # True = end of an isothermal hold at the target
+    hold_temp: float | None = None    # programmed hold temperature
+    hold_min: float | None = None     # programmed hold duration (min)
+    time: float | None = None         # time of the reference point (min)
+
+
+def programmed_hold(steps: list[str], target: float, start_temp: float) -> tuple[float, float] | None:
+    """(set temperature, minutes) if the first setpoint at or above the target is an
+    isothermal hold within HOLD_TOL_C of it; otherwise None."""
+    sp = None
+    for st in steps or []:
+        m = _SETPOINT.search(st)
+        if m:
+            if sp is not None:
+                return None  # next setpoint without an isothermal step in between
+            x = float(m.group(1))
+            if x >= target - HOLD_TOL_C and start_temp < target - HOLD_TOL_C:
+                if abs(x - target) > HOLD_TOL_C:
+                    return None  # first goes past the target without holding at it
+                sp = x
+            continue
+        m = _ISOTHERMAL.search(st)
+        if m and sp is not None:
+            return sp, float(m.group(1))
+    return None
+
+
+def dry_reference(t: list[float], T: list[float], W: list[float], target: float,
+                  steps: list[str] | None = None) -> DryReference:
+    """Weight used as 100 % for the dry basis.
+
+    Normally the weight when the temperature first reaches `target` (interpolated).
+    If the method holds the sample isothermally at `target` (e.g. a drying step),
+    the weight at the end of that hold is used instead.
+    """
+    ref = DryReference(target)
+    n = len(T)
+    if n == 0:
+        return ref
+    if T[0] >= target:
+        ref.weight, ref.time = W[0], t[0]
+    else:
+        for i in range(1, n):
+            if T[i] >= target:
+                f = (target - T[i - 1]) / (T[i] - T[i - 1]) if T[i] != T[i - 1] else 0.0
+                ref.weight = W[i - 1] + f * (W[i] - W[i - 1])
+                ref.time = t[i - 1] + f * (t[i] - t[i - 1])
+                break
+    hold = programmed_hold(steps or [], target, T[0])
+    if hold is None or ref.weight is None:
+        return ref
+    start = next(i for i in range(n) if T[i] >= target - HOLD_TOL_C)
+    end = start
+    while end + 1 < n and abs(T[end + 1] - target) <= HOLD_EXIT_C:
+        end += 1
+    # step back to where the temperature started moving again (the next ramp or cool-down)
+    while end > start and abs(_rate(t, T, end)) > RESUME_RATE_C_MIN:
+        end -= 1
+    ref.weight, ref.time, ref.hold = W[end], t[end], True
+    ref.hold_temp, ref.hold_min = hold
+    return ref
+
+
 def parse_temperature(text: str) -> float:
     v = float(text.replace(",", ".").strip())
     if not -100 <= v <= 1500:

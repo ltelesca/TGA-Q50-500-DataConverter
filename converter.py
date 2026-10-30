@@ -12,7 +12,10 @@ from analysis import (
     RAMP,
     REHEAT_RISE_C,
     STANDARD_LOSS_LEVELS,
+    HOLD_TOL_C,
+    DryReference,
     detect_cycles,
+    dry_reference,
     fmt_level,
     interval_loss,
     method_programs_cooling,
@@ -21,7 +24,7 @@ from analysis import (
 from tga_reader import TGARun, has_run_number
 
 APP_NAME = "TGA Q500 Data Converter"
-APP_VERSION = "0.6.1"
+APP_VERSION = "0.7.0"
 
 UA_POINT_TARGET = 19000
 UA_REDUCE_ABOVE = 20000  # UA leaves runs of up to ~19,800 points untouched; 21,450 were reduced
@@ -149,16 +152,22 @@ def _local_slope(x: list[float], y: list[float], half: int) -> list[float | None
     return out
 
 
-def _weight_at_temperature(T: list[float], W: list[float], target: float) -> float | None:
-    """Weight when the temperature first reaches `target` (linear interpolation)."""
-    if T[0] >= target:
-        return W[0]
-    for i in range(1, len(T)):
-        if T[i] >= target:
-            t0, t1 = T[i - 1], T[i]
-            f = (target - t0) / (t1 - t0) if t1 != t0 else 0.0
-            return W[i - 1] + f * (W[i] - W[i - 1])
-    return None
+def dry_ref_for(run: TGARun, opts: ExportOptions) -> DryReference | None:
+    """Dry-basis reference for this run, or None when the dry-basis column is not selected."""
+    if "weight_pct_dry" not in opts.columns:
+        return None
+    ti, wi = _signal_index(run, "Temperature"), _signal_index(run, "Weight")
+    if ti is None or wi is None or not run.rows:
+        return DryReference(opts.dry_temp_c)
+    return dry_reference([r[0] for r in run.rows], [r[ti] for r in run.rows], [r[wi] for r in run.rows],
+                         opts.dry_temp_c, run.get_all("OrgMethod"))
+
+
+def dry_ref_text(ref: DryReference) -> str:
+    if ref.hold:
+        return (f"weight at the end of the isothermal hold at {ref.hold_temp:g} °C "
+                f"({ref.hold_min:g} min in the method; ends at {ref.time:.2f} min), {ref.weight:.6g} mg")
+    return f"weight when the sample first reached {ref.target:g} °C (at {ref.time:.2f} min), {ref.weight:.6g} mg"
 
 
 def _reduce_blocks(n: int, event_rows: list[int], target: int) -> list[tuple[int, int]]:
@@ -211,10 +220,10 @@ def build_table(
     cols["mass_loss"] = [100.0 - p for p in pct]
 
     if "weight_pct_dry" in opts.columns:
-        w_dry = _weight_at_temperature(T, W, opts.dry_temp_c)
+        w_dry = dry_ref_for(run, opts).weight
         if w_dry is None or w_dry == 0:
             warnings.append(f"sample never reached {opts.dry_temp_c:g} °C; dry-basis column empty")
-            notes["weight_pct_dry"] = f"EMPTY: sample never reached {opts.dry_temp_c:g} °C"
+            notes["weight_pct_dry"] = f"EMPTY: the sample never reached {opts.dry_temp_c:g} °C"
             cols["weight_pct_dry"] = [None] * n
         else:
             cols["weight_pct_dry"] = [100.0 * w / w_dry for w in W]
@@ -250,7 +259,7 @@ def build_table(
         cols["gas"] = [float(g) if g is not None else None for g in run.gas]
         if all(g is None for g in run.gas):
             warnings.append("active gas unknown (no gas selection in method); gas column empty")
-            notes["gas"] = "EMPTY: method has no gas selection"
+            notes["gas"] = "EMPTY: the method has no gas selection"
 
     keys = [k for k in COLUMN_KEYS if k in opts.columns]
     if not keys:
@@ -357,14 +366,38 @@ def _results_lines(run, opts, run_type, run_type_source, cycles) -> list[str]:
     return out
 
 
+SEE_FLAGS = "[!] see Flags"
+
+
+def _interval_flags(run, opts, run_type, cycles) -> dict[tuple[float, float], str]:
+    """Intervals that could not be calculated at all -> reason."""
+    ti, wi = _signal_index(run, "Temperature"), _signal_index(run, "Weight")
+    if ti is None or wi is None or not run.rows:
+        return {}
+    T = [r[ti] for r in run.rows]
+    W = [r[wi] for r in run.rows]
+    out = {}
+    for a, b in opts.mass_loss_intervals:
+        segs = [(0, len(T))] if run_type == RAMP else cycles
+        if not any(interval_loss(T[s0:s1], W[s0:s1], a, b).reached for s0, s1 in segs):
+            if run_type == RAMP and T[0] >= b:
+                out[(a, b)] = (f"mass loss {a:g}-{b:g} °C: the run starts at {T[0]:.1f} °C, "
+                               f"already above {b:g} °C")
+            else:
+                where = "the run" if run_type == RAMP else "any cycle"
+                out[(a, b)] = (f"mass loss {a:g}-{b:g} °C: not reached while heating in {where} "
+                               f"(maximum temperature {max(T):.1f} °C)")
+    return out
+
+
 def _interval_lines(run, opts, run_type, cycles) -> list[str]:
     ti, wi = _signal_index(run, "Temperature"), _signal_index(run, "Weight")
     T = [r[ti] for r in run.rows]
     W = [r[wi] for r in run.rows]
     w0 = W[0]
-    w_dry = None
-    if "weight_pct_dry" in opts.columns:
-        w_dry = _weight_at_temperature(T, W, opts.dry_temp_c)
+    ref = dry_ref_for(run, opts)
+    w_dry = ref.weight if ref is not None else None
+    failed = _interval_flags(run, opts, run_type, cycles)
     flagged = False
 
     def label(res) -> str:
@@ -393,14 +426,14 @@ def _interval_lines(run, opts, run_type, cycles) -> list[str]:
                 if w_dry:
                     cells.append(f"{100 * r.loss_mg / w_dry:.2f}")
             else:
-                cells += ["not reached"]
+                cells += ["not reached   " + SEE_FLAGS]
             out.append("  " + cells[0].ljust(widths[0]) + " " + " ".join(c.rjust(w) for c, w in zip(cells[1:], widths[1:])))
         out.append("  Loss (% of initial) = 100 x loss / first recorded weight "
                    f"({w0:.6g} mg), so consecutive intervals add up (25-150 + 150-600 = 25-600).")
     else:
         out.append("Mass loss between temperatures (per cycle; % relative to the weight at the start of each cycle)")
         for a, b in opts.mass_loss_intervals:
-            out.append(f"  Interval {a:g}-{b:g} °C")
+            out.append(f"  Interval {a:g}-{b:g} °C" + (f"   {SEE_FLAGS}" if (a, b) in failed else ""))
             h = ["Cycle", "W start (mg)", "W end (mg)", "Loss (mg)", "Loss (% of cycle start)"]
             wd = [7, 13, 12, 10, 24]
             if w_dry:
@@ -427,10 +460,43 @@ def _interval_lines(run, opts, run_type, cycles) -> list[str]:
     if flagged:
         out.append("  * The run (or cycle) starts above the From temperature, so its first recorded point is used as start.")
     if w_dry:
-        out.append(f"  Loss (% of dry) = 100 x loss / weight when the sample first reached {opts.dry_temp_c:g} °C "
-                   f"({w_dry:.6g} mg), the same reference as the dry-basis column. For intervals below "
+        out.append(f"  Loss (% of dry) = 100 x loss / dry reference ({ref.weight:.6g} mg, see Notes), "
+                   "the same reference as the dry-basis column.")
+        out.append(f"  For intervals below "
                    f"{opts.dry_temp_c:g} °C it is the water lost per 100 mg of dry material.")
     return out
+
+
+def collect_flags(run, opts, headers, notes, run_type=RAMP, cycles=None) -> tuple[list[str], set[str]]:
+    """Things the user asked for that could not be produced (or may be incomplete).
+
+    Returns the flag lines (explanations, shown once at the top of the info file)
+    and the CSV headers that carry a flag.
+    """
+    if cycles is None:
+        cycles = [(0, len(run.rows))]
+    flags: list[str] = []
+    flagged_headers: set[str] = set()
+    by_key = {c.key: c for c in COLUMNS}
+    # group columns with the same reason, keeping CSV column order
+    groups: dict[str, list[str]] = {}
+    for h in headers:
+        c = next((c for c in COLUMNS if c.header == h), None)
+        note = notes.get(c.key, "") if c else ""
+        if note.startswith("EMPTY: "):
+            groups.setdefault(note[len("EMPTY: "):], []).append(h)
+            flagged_headers.add(h)
+    for reason, hs in groups.items():
+        what = "columns" if len(hs) > 1 else "column"
+        extra = ""
+        if hs == [by_key["weight_pct_dry"].header] and opts.mass_loss_intervals:
+            extra = "; no 'Loss (% of dry)' in mass loss between temperatures"
+        flags.append(f"{', '.join(hs)}: {reason} ({what} kept but empty{extra})")
+    if not run.complete:
+        flags.append("end-of-data marker missing: the file may be truncated, or the run was still in progress")
+    if opts.mass_loss_intervals:
+        flags += list(_interval_flags(run, opts, run_type, cycles).values())
+    return flags, flagged_headers
 
 
 def build_info(
@@ -447,8 +513,17 @@ def build_info(
     if cycles is None:
         cycles = [(0, len(run.rows))]
     g = run.get
-    lines = [
-        f"{APP_NAME} {APP_VERSION} - run information",
+    notes = notes or {}
+    flags, flagged_headers = collect_flags(run, opts, headers, notes, run_type, cycles)
+    lines = [f"{APP_NAME} {APP_VERSION} - run information", ""]
+    if flags:
+        lines.append("Flags")
+        lines += [f"  [!] {f}" for f in flags]
+        if flagged_headers:
+            lines.append("  (Empty columns are kept so that every file in a batch has the same columns.)")
+    else:
+        lines.append("Flags: none")
+    lines += [
         "",
         f"Source file        {run.path.name}",
         f"Original path      {g('OrgFile') or g('File')}",
@@ -478,7 +553,7 @@ def build_info(
             f"  Temperature range  {min(r[ti] for r in run.rows):.2f} to {max(r[ti] for r in run.rows):.2f} °C"
         )
     if not run.complete:
-        lines.append("  NOTE: end-of-data marker missing - file may be truncated or the run was still in progress.")
+        lines.append(f"  End-of-data marker missing   {SEE_FLAGS}")
 
     if run.gas_events:
         lines += ["", "Gas switches (time of first point after the switch)"]
@@ -491,28 +566,29 @@ def build_info(
             lines += _interval_lines(run, opts, run_type, cycles)
 
     lines += ["", "CSV columns"]
-    notes = notes or {}
     by_header = {c.header: c for c in COLUMNS}
     width = max(len(h) for h in headers) + 3
     dwidth = max(len(by_header[h].description) for h in headers if h in by_header) + 3
     for h in headers:
         c = by_header.get(h)
         note = notes.get(c.key, "") if c else ""
+        if h in flagged_headers:
+            note = SEE_FLAGS
         lines.append(f"  {h:<{width}}{(c.description if c else ''):<{dwidth}}{note}".rstrip())
-    if any(v.startswith("EMPTY") for v in notes.values()):
-        lines.append("  (EMPTY columns are kept so that every file has the same columns; their cells are empty.)")
     lines += ["", "Notes"]
     if wi is not None:
         lines.append(f"  Weight (%) = 100 x Weight / first recorded weight ({run.rows[0][wi]:.6g} mg).")
         if "mass_loss" in opts.columns:
             lines.append("  Mass loss (%) = 100 - Weight (%).")
-        if "weight_pct_dry" in opts.columns and ti is not None:
-            wd = _weight_at_temperature([r[ti] for r in run.rows], [r[wi] for r in run.rows], opts.dry_temp_c)
-            if wd is not None:
-                lines.append(
-                    f"  Weight dry basis (%) = 100 x Weight / weight when the sample first reached "
-                    f"{opts.dry_temp_c:g} °C ({wd:.6g} mg)."
-                )
+        ref = dry_ref_for(run, opts)
+        if ref is not None and ref.weight:
+            lines.append(f"  Weight dry basis (%) = 100 x Weight / dry reference.")
+            lines.append(f"    Dry reference: {dry_ref_text(ref)}.")
+            lines.append(f"    Rule: if the method holds the sample isothermally at {opts.dry_temp_c:g} °C "
+                         f"(within {HOLD_TOL_C:g} °C) when it first gets there,")
+            lines.append(f"    the weight at the end of the hold is used; otherwise the weight when the temperature "
+                         f"first reaches {opts.dry_temp_c:g} °C.")
+            lines.append("    Values before the reference can be above 100 % (the sample still contains moisture).")
     if any(k in opts.columns for k in SMOOTHED_KEYS):
         lines.append(
             f"  Heating rate and derivatives: least-squares slope over a {opts.dtg_window_s:g} s window "
@@ -537,7 +613,6 @@ def build_info(
         )
     else:
         lines.append("  Full data: every recorded point is included.")
-    # Column-related warnings are shown next to the column above.
     return "\r\n".join(lines) + "\r\n"
 
 
@@ -566,7 +641,8 @@ def export_run(
         cycles = cycles_for(run)
     if run_type is None:
         run_type = CYCLING if len(cycles) > 1 else RAMP
-    headers, table, warnings, notes = build_table(run, opts)
+    headers, table, _, notes = build_table(run, opts)
+    warnings, _ = collect_flags(run, opts, headers, notes, run_type, cycles)
     csv_path, info_path = output_paths(run.path, opts.output_dir, stem)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     with open(csv_path, "w", encoding="ascii", newline="") as fh:  # code-friendly: plain ASCII, no BOM

@@ -79,6 +79,22 @@ W = [10 - 0.01 * i for i in range(600)]
 r = interval_loss(T, W, 25, 150)
 assert r.reached and abs(r.loss_mg - 1.0) < 1e-9 and r.start_used == 50
 assert not interval_loss(T, W, 700, 800).reached
+assert app.MAX_ML_STEPS == 6 and len(a.ml_rows) == 6, "mass loss between temperatures: 6 steps"
+
+# dry-basis reference: first reach on a ramp, end of the hold when the method holds there
+from analysis import dry_reference  # noqa: E402
+t = [i / 60 for i in range(6000)]  # 1 s points, 100 min
+Th = [min(25 + 10 * x, 150) if x < 30 else 150 + 10 * (x - 30) for x in t]  # hold 150 °C from 12.5 to 30 min
+Wh = [10 - 0.5 * min(x, 30) / 30 for x in t]  # dries during the hold
+steps = ["1: Ramp 10.00 °C/min to 150.00 °C", "2: Isothermal for 17.50 min", "3: Ramp 10.00 °C/min to 800.00 °C"]
+r = dry_reference(t, Th, Wh, 150, steps)
+assert r.hold and abs(r.time - 30) < 0.3 and abs(r.weight - 9.5) < 0.01, r
+r = dry_reference(t, Th, Wh, 150, ["1: Ramp 10.00 °C/min to 800.00 °C"])  # same data, no hold in the method
+assert not r.hold and abs(r.time - 12.5) < 0.05
+r = dry_reference(t, Th, Wh, 110, steps)  # hold is at another temperature
+assert not r.hold and abs(r.time - 8.5) < 0.05
+r = dry_reference(t, Th, Wh, 1500, steps)
+assert r.weight is None
 
 a.update()
 a.destroy()

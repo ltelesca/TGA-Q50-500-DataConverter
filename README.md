@@ -4,7 +4,7 @@ Small Windows app that converts TA Instruments TGA Q500 raw data files
 (`.001`, `.002`, … `.00n`) into CSV files, without going
 through Universal Analysis (UA).
 
-Current version: **0.6.1**
+Current version: **0.7.0**
 
 ## Getting the app
 
@@ -103,7 +103,7 @@ folder chosen under *This folder*):
 | File | Contents |
 |---|---|
 | `sample_001.csv` | Plain table: one header row with **code-friendly column names** (see below), then numbers only; comma-separated, plain ASCII (opens directly in Excel, Python, R, MATLAB) |
-| `sample_001_info.txt` | Sample, mass, operator, date, instrument, pan/gases, method steps, gas-switch times, run type, point count, the list of CSV columns with their readable names and units, notes on how each calculated variable was made, and the results selected in section 4 |
+| `sample_001_info.txt` | **Flags** at the top (anything that could not be produced, or `Flags: none`), then sample, mass, operator, date, instrument, pan/gases, method steps, gas-switch times, run type, point count, the list of CSV columns with their readable names and units, notes on how each calculated variable was made, and the results selected in section 4 |
 
 - The run number is kept in the name, so `sample.001` and `sample.002`
   never overwrite each other. Names without a run number are kept whole
@@ -132,8 +132,8 @@ record a signal (a Q50 set up to record only time, temperature and
 weight has no purge flows; a method without gas selection has no active
 gas), the column is still there but its cells are **empty** (not "NA":
 empty cells are read as missing values by Excel, pandas, R and MATLAB
-alike). Nothing fails; the info file marks the column, e.g.
-`balance_flow_ml_per_min  Balance purge flow (mL/min)  EMPTY: not recorded by this instrument`.
+alike). Nothing fails; the column is listed under **Flags** at the top
+of the info file (see *Flags* below).
 
 ### Section 2 – Columns to export (recorded by the instrument)
 
@@ -153,7 +153,7 @@ Each ticked variable becomes a column in the CSV.
 | In the app | CSV column | Definition |
 |---|---|---|
 | Weight (%) | `weight_pct` | 100 × Weight / first recorded weight |
-| Weight (%), dry basis | `weight_dry_pct` | 100 × Weight / weight when the sample **first** reaches the reference temperature (default 150 °C; input enabled only when this variable is ticked) |
+| Weight (%), dry basis | `weight_dry_pct` | 100 × Weight / dry reference weight: the weight at the **end of the isothermal hold** if the method holds the sample at the reference temperature, otherwise the weight when the sample **first** reaches it (default 150 °C; input enabled only when this variable is ticked) |
 | Mass loss (%) | `mass_loss_pct` | 100 − Weight (%) |
 | Heating rate (°C/min) | `heating_rate_c_per_min` | Slope of Temperature vs time |
 | Derivative weight (%/min) | `dtg_pct_per_min` | − slope of Weight (%) vs time |
@@ -174,12 +174,32 @@ is the temperature span, heating rate × window: 10 s is 0.3 °C at
 2–4 s keeps peaks sharper. Universal Analysis uses a 60 s window: set
 60 s to reproduce UA's derivative curves.
 
-**Dry basis notes:** one reference weight is used for the whole run, so
-cycles stay on the same scale. It is taken at the instant the reference
-temperature is crossed, not after a hold; on fast ramps (e.g. 50 °C/min)
-some samples are not completely dry at 150 °C (0.03–0.86 % further loss
-before decomposition in our test runs). A higher reference temperature,
-still below any decomposition, reduces this.
+**Dry basis notes:**
+
+- **Which weight is the reference.** If the method holds the sample
+  isothermally at the reference temperature (e.g. *Ramp 10 °C/min to
+  150 °C*, *Isothermal for 30 min*), the weight at the **end of the
+  hold** is used: the hold is there to dry the sample before the ramp
+  goes on. Otherwise (a plain ramp through the reference temperature) the
+  weight at the instant it is **first reached** is used.
+  - The hold must be programmed in the method, at the reference
+    temperature (within 3 °C), the first time the run gets there. A hold
+    at another temperature (e.g. hold at 110 °C, reference 150 °C) does
+    not count, and neither do slow ramps or Hi-Res slow-downs.
+  - The end of the hold is taken from the data: the last point before the
+    temperature starts moving again.
+  - The info file states which case was used, with the time and weight,
+    e.g. `Dry reference: weight at the end of the isothermal hold at 150 °C
+    (30 min in the method; ends at 42.62 min), 4.10044 mg`.
+- **Values above 100 %.** Before the reference point the sample still
+  contains moisture, so dry-basis values there are above 100 %. This is
+  expected.
+- **One reference for the whole run**, so cycles stay on the same scale.
+- **Fast ramps without a hold**: some samples are not completely dry at
+  the instant 150 °C is reached (0.03–0.86 % further loss before
+  decomposition in our test runs at 50 °C/min). A drying hold in the
+  method, or a higher reference temperature still below any
+  decomposition, avoids this.
 
 ### Section 4 – Info file
 
@@ -189,7 +209,7 @@ still below any decomposition, reduces this.
   standard set **1, 5, 10, 50 %** or a **custom** list typed by the user
   (comma-separated, e.g. `2, 5, 20`).
 - **Mass loss between temperatures** – off by default; when ticked, choose
-  the number of **steps (1–5)** and enter a **From** and **To**
+  the number of **steps (1–6)** and enter a **From** and **To**
   temperature for each (e.g. 25 → 150 °C for moisture, 150 → 600 °C for
   decomposition). See *Mass loss between temperatures* below.
 
@@ -211,6 +231,30 @@ When ticked, results are computed from every recorded point:
 
 "T at x % loss" is the first time the weight drops x % below the
 reference weight.
+
+### Flags
+
+The info file starts with a **Flags** section. It reads `Flags: none`
+when everything asked for was produced. Otherwise it has one `[!]` line
+per problem, with the explanation, e.g.
+
+```
+Flags
+  [!] balance_flow_ml_per_min, sample_flow_ml_per_min: not recorded by this instrument (columns kept but empty)
+  [!] mass loss 600-800 °C: not reached while heating in the run (maximum temperature 797.3 °C)
+```
+
+Further down, the affected entries only carry `[!] see Flags`, so the
+explanation is in one place. In the app, the Status column then shows
+**Done ⚠ see info file**.
+
+Flagged: columns left empty (signal not recorded, no gas selection in the
+method, dry-basis reference temperature never reached), mass-loss steps
+not reached anywhere in the run, and files with no end-of-data marker
+(possibly truncated, or the run was still in progress). Blanks that are
+expected by design, such as `dtg_pct_per_c` during isothermal holds, or a
+step not covered by some cycles ("n.r."), are explained in the notes and
+not flagged.
 
 ### Mass loss between temperatures
 
@@ -240,8 +284,10 @@ Two details:
   cycle starts above the From temperature but below the To temperature,
   its **first point** is used as start and the row is marked with `*`.
 - The To temperature must actually be reached: a ramp programmed to
-  800 °C may stop at 797 °C, so 600–800 °C shows "not reached"; use
-  600–790 °C instead.
+  800 °C may stop at 797 °C, so 600–800 °C shows "not reached" (and is
+  flagged); use 600–790 °C instead.
+- **Loss (% of dry)** uses the same dry reference as the dry-basis column,
+  including the end-of-hold rule.
 
 ## Section 5 – Save options
 
@@ -253,7 +299,7 @@ Two details:
 The window opens at the size its content needs, taking the Windows
 display scaling (100 %, 125 %, 150 %, …) into account, and centred on the
 screen; it grows when you add mass-loss steps. Only when the screen is
-too small for everything (e.g. a 1366×768 laptop with all five mass-loss
+too small for everything (e.g. a 1366×768 laptop with all six mass-loss
 steps) does it use the whole screen and show a scroll bar.
 
 ## Full data vs. Universal Analysis
@@ -324,7 +370,7 @@ Reverse-engineered from Q Series files:
 | `analysis.py` | Run-type / cycle detection, results per run and per cycle |
 | `converter.py` | Columns, calculations, reduction, CSV and info file |
 | `app.py` | Window (Tkinter, drag-and-drop via tkinterdnd2) |
-| `tests/smoke_gui.py` | Checks run on every build (window, options, run type, cycle detection) |
+| `tests/smoke_gui.py` | Checks run on every build (window, options, run type, cycle detection, mass-loss steps, dry reference) |
 | `.github/workflows/build-windows.yml` | Builds the .exe on GitHub's Windows machine |
 
 GitHub Actions builds the three `.exe` files on every push to `main`
@@ -343,6 +389,7 @@ pyinstaller --onefile --windowed --name TGA-Q500-DataConverter --collect-all tki
 
 | Version | Changes |
 |---|---|
+| 0.7.0 | Info file: **Flags** section at the top (`[!]`, or `Flags: none`), affected entries marked `[!] see Flags`; dry basis uses the weight at the end of an isothermal hold at the reference temperature, and the info file states which reference was used; note that dry-basis values before the reference can exceed 100 %; mass loss between temperatures up to 6 steps; green/red status colours fixed on the Windows 7 builds |
 | 0.6.1 | Window opens sized to its content and to the Windows display scaling (sharp text at 125/150 %), grows when mass-loss steps are added, scroll bar only when the screen is too small; signals the instrument did not record give empty columns, explained next to each column in the info file; tested on Q50 data |
 | 0.6.0 | Code-friendly CSV column names (`time_min`, `temperature_c`, …) in plain ASCII, readable names listed in the info file; mass loss between temperatures (1–5 steps, ramp and per cycle, % of initial and % of dry); window scrolls on small screens; file-list buttons in a 2×2 grid |
 | 0.5.3 | Section names: "Variables to calculate" (3) and "Save options" (5) |
