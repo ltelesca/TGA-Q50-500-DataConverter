@@ -1,8 +1,7 @@
 # TGA Q50-500 Data Converter
 
-Small Windows app that converts TA Instruments TGA Q500 raw data files
-(`.001`, `.002`, … `.00n`) into CSV files, without going
-through Universal Analysis (UA).
+Small Windows app that converts TA Instruments TGA Q50-500 raw data files
+(`.001`, `.002`, … `.00n`) into CSV files.
 
 Current version: **0.7.0**
 
@@ -18,15 +17,11 @@ needed.
 | `TGA-Q500-DataConverter-Win7-64bit` | Windows 7, 64-bit |
 | `TGA-Q500-DataConverter-Win7-32bit` | Windows 7, 32-bit |
 
-To check which Windows 7 version a PC has: **Control Panel → System →
-System type**.
 
 The Windows 7 versions are built with Python 3.8, the last Python that
 runs on Windows 7. They need **Service Pack 1** and the Windows
 **Universal C Runtime** update (KB2999226), which a Windows 7 PC that
-has received Windows Updates already has. The Windows 10/11 version does
-**not** run on Windows 7 (typical error: missing
-`api-ms-win-core-path-l1-1-0.dll`). All three are built from the same
+has received Windows Updates already has. All three are built from the same
 code and produce identical CSV and info files.
 
 The first time it runs, Windows may show *"Windows protected your PC"*
@@ -37,14 +32,14 @@ The first time it runs, Windows may show *"Windows protected your PC"*
 1. **Add files** – *Add files…*, *Add folder…* (picks up every TGA raw
    file in it), or drag files/folders onto the file list. Raw files are
    recognised by their **content**, not their name: `.001`, `.002`, … as
-   well as names with dots or no extension (`6.27 MgCl 1 180`,
+   well as names with dots or no extension (e.g. `6.27 MgCl 1 180`,
    `2025.02.21_CNI Calicium oxalate std`). Text exports, PDFs and method
    files (`.mth`) are rejected. Aborted, short and still-running runs
    convert normally; empty runs are flagged.
-2. **Check the run type** of each file (see *Run type* below).
-3. **Section 2 – Columns to export:** signals recorded by the instrument.
+2. **Check the run type** of each file.
+3. **Section 2 – Columns to export:** signals recorded by the instrument to export.
 4. **Section 3 – Variables to calculate:** values calculated from the
-   recorded signals (see below).
+   recorded signals.
 5. **Section 4 – Info file:** whether to write the info file and which
    results to put in it.
 6. **Section 5 – Save options:** data reduction and output folder.
@@ -56,9 +51,6 @@ and **red** if it cannot be read or the conversion fails (the reason is
 shown).
 
 ### Defaults
-
-The app remembers nothing between sessions (it runs on a shared
-instrument PC). Every time it opens:
 
 - Run type: **Auto-detect**
 - Columns to export: **Time, Temperature, Weight** on; purge flows and gas off
@@ -90,11 +82,6 @@ selector next to the file list can also treat all files as ramp or all as
 cycling. The info file always states the run type used and whether it was
 detected, set for that file, or set for all files.
 
-Checked on 554 lab runs against their own method steps: 518 ramp,
-36 cycling (2, 10 or 11 cycles). Every cycling run matches its method;
-the only runs whose method programmes cycles but which are reported as
-ramp are 9 runs aborted inside their first cycle.
-
 ### Output files
 
 For each run, two files are written next to the original (or in the
@@ -102,8 +89,8 @@ folder chosen under *This folder*):
 
 | File | Contents |
 |---|---|
-| `sample_001.csv` | Plain table: one header row with **code-friendly column names** (see below), then numbers only; comma-separated, plain ASCII (opens directly in Excel, Python, R, MATLAB) |
-| `sample_001_info.txt` | **Flags** at the top (anything that could not be produced, or `Flags: none`), then sample, mass, operator, date, instrument, pan/gases, method steps, gas-switch times, run type, point count, the list of CSV columns with their readable names and units, notes on how each calculated variable was made, and the results selected in section 4 |
+| `sample_001.csv` | Plain table; comma-separated, plain ASCII  |
+| `sample_001_info.txt` | Info file; selection in section 4 |
 
 - The run number is kept in the name, so `sample.001` and `sample.002`
   never overwrite each other. Names without a run number are kept whole
