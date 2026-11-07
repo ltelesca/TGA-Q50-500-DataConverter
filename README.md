@@ -1,15 +1,12 @@
 # TGA Q50-500 Data Converter
 
-Small Windows app that converts TA Instruments TGA Q50-500 raw data files
-(`.001`, `.002`, … `.00n`) into CSV files.
+Small Windows app that converts TA Instruments TGA Q50-500 raw data files (`.001`, `.002`, … `.00n`) into CSV files.
 
 Current version: **0.7.0**
 
 ## Getting the app
 
-Download from the **Actions** tab of this repository (latest successful
-run → *Artifacts*). Each is a single .exe; no installation and no Python
-needed.
+Download from the **Actions** tab of this repository (latest successful run → *Artifacts*). Each is a single .exe; no installation and no Python needed.
 
 | Download | For |
 |---|---|
@@ -18,37 +15,21 @@ needed.
 | `TGA-Q500-DataConverter-Win7-32bit` | Windows 7, 32-bit |
 
 
-The Windows 7 versions are built with Python 3.8, the last Python that
-runs on Windows 7. They need **Service Pack 1** and the Windows
-**Universal C Runtime** update (KB2999226), which a Windows 7 PC that
-has received Windows Updates already has. All three are built from the same
-code and produce identical CSV and info files.
+The Windows 7 versions are built with Python 3.8, the last Python that runs on Windows 7. They need **Service Pack 1** and the Windows **Universal C Runtime** update (KB2999226), which a Windows 7 PC that has received Windows Updates already has. All three are built from the same code and produce identical CSV and info files.
 
-The first time it runs, Windows may show *"Windows protected your PC"*
-(the .exe is not digitally signed): click **More info → Run anyway**.
+The first time it runs, Windows may show *"Windows protected your PC"* (the .exe is not digitally signed): click **More info → Run anyway**.
 
 ## Using it
 
-1. **Add files** – *Add files…*, *Add folder…* (picks up every TGA raw
-   file in it), or drag files/folders onto the file list. Raw files are
-   recognised by their **content**, not their name: `.001`, `.002`, … as
-   well as names with dots or no extension (e.g. `6.27 MgCl 1 180`,
-   `2025.02.21_CNI Calicium oxalate std`). Text exports, PDFs and method
-   files (`.mth`) are rejected. Aborted, short and still-running runs
-   convert normally; empty runs are flagged.
+1. **Add files** – *Add files…*, *Add folder…* (picks up every TGA raw file in it), or drag files/folders onto the file list. Raw files are recognised by their **content**, not their name: `.001`, `.002`, … as well as names with dots or no extension (e.g. `6.27 MgCl 1 180`, `2025.02.21_CNI Calicium oxalate std`). Text exports, PDFs and method files (`.mth`) are rejected. Aborted, short and still-running runs  convert normally; empty runs are flagged.
 2. **Check the run type** of each file.
 3. **Section 2 – Columns to export:** signals recorded by the instrument to export.
-4. **Section 3 – Variables to calculate:** values calculated from the
-   recorded signals.
-5. **Section 4 – Info file:** whether to write the info file and which
-   results to put in it.
+4. **Section 3 – Variables to calculate:** values calculated from the recorded signals.
+5. **Section 4 – Info file:** whether to write the info file and which results to put in it.
 6. **Section 5 – Save options:** data reduction and output folder.
 7. **Convert to CSV.**
 
-The file list shows sample name, run date, number of points, duration and
-run type for each file. The Status column turns **green** when a file is converted
-and **red** if it cannot be read or the conversion fails (the reason is
-shown).
+The file list shows sample name, run date, number of points, duration and run type for each file. The Status column turns **green** when a file is converted and **red** if it cannot be read or the conversion fails (the reason is shown).
 
 ### Defaults
 
@@ -60,56 +41,31 @@ shown).
 
 ## Run type: ramp or cycling
 
-Each file is classified when it is added, and the result is shown in the
-**Run type** column:
+Each file is classified when it is added, and the result is shown in the **Run type** column:
 
-- **Ramp** – one or more heating ramps, possibly at different rates, with
-  isothermal holds or small temperature dips in between.
-- **Cycling (N)** – the sample is cooled significantly and heated again,
-  N times. A new cycle starts where heating resumes after the temperature
-  has dropped **at least 50 °C** below the highest temperature of the
-  current cycle and then risen again by **at least 50 °C**, **and the
-  method programmes such a cool-down**. Small dips of 10–20 °C do not
-  start a new cycle, and neither do temperature drops the instrument
-  makes on its own (Hi-Res runs slow down or reverse heating during fast
-  mass loss). Any hold at the low temperature (for example a CO₂-uptake
-  step) stays in the cycle it follows.
+- **Ramp** – one or more heating ramps, possibly at different rates, with isothermal holds or small temperature dips in between.
+- **Cycling (N)** – the sample is cooled significantly and heated again, N times. A new cycle starts where heating resumes after the temperature has dropped **at least 50 °C** below the highest temperature of the current cycle and then risen again by **at least 50 °C**, **and the method programmes such a cool-down**. Small dips of 10–20 °C do not start a new cycle, and neither do temperature drops the instrument makes on its own (Hi-Res runs slow down or reverse heating during fast mass loss). Any hold at the low temperature (for example a CO₂-uptake  step) stays in the cycle it follows.
 
-Batches can mix both kinds; each file is processed according to its own
-run type. To correct a file, **double-click its Run type cell** (it
-toggles between Ramp and Cycling and shows "– manual"). The **Run type**
-selector next to the file list can also treat all files as ramp or all as
-cycling. The info file always states the run type used and whether it was
-detected, set for that file, or set for all files.
+Batches can mix both kinds; each file is processed according to its own run type. To correct a file, **double-click its Run type cell** (it toggles between Ramp and Cycling and shows "– manual"). The **Run type** selector next to the file list can also treat all files as ramp or all as cycling. The info file always states the run type used and whether it was detected, set for that file, or set for all files.
 
 ### Output files
 
-For each run, two files are written next to the original (or in the
-folder chosen under *This folder*):
+For each run, two files are written next to the original (or in the folder chosen under *This folder*):
 
 | File | Contents |
 |---|---|
 | `sample_001.csv` | Plain table; comma-separated, plain ASCII  |
 | `sample_001_info.txt` | Info file; selection in section 4 |
 
-- The run number is kept in the name, so `sample.001` and `sample.002`
-  never overwrite each other. Names without a run number are kept whole
-  (`6.27 MgCl 1 180` → `6.27 MgCl 1 180.csv`).
-- Two runs with the same name in one batch (e.g. from different folders,
-  saved to one folder) get ` (2)`, ` (3)`, … instead of overwriting.
+- The run number is kept in the name, so `sample.001` and `sample.002` never overwrite each other. Names without a run number are kept whole (`6.27 MgCl 1 180` → `6.27 MgCl 1 180.csv`).
+- Two runs with the same name in one batch (e.g. from different folders, saved to one folder) get ` (2)`, ` (3)`, … instead of overwriting.
 - Files are saved in the folder chosen in **section 5 – Save options**.
 - If an output file already exists, the app asks: overwrite, skip, or cancel.
-- **Saving directly on the Desktop is blocked** (normal, OneDrive or
-  Public Desktop), both when *This folder* is the Desktop and when the
-  source files sit on the Desktop with *Same folder as each file*.
-  Subfolders of the Desktop are allowed.
+- **Saving directly on the Desktop is blocked** (normal, OneDrive or Public Desktop), both when *This folder* is the Desktop and when the source files sit on the Desktop with *Same folder as each file*.
 
 ## Columns and variables
 
-**CSV column names are code-friendly**: lowercase, plain ASCII, words
-joined by `_`, unit at the end (`_per_` for rates). They can be used
-directly in code, e.g. `df.temperature_c` (pandas), `d$weight_pct` (R),
-`T.dtg_pct_per_min` (MATLAB), with no renaming and no special
+**CSV column names are code-friendly**: lowercase, plain ASCII, words joined by `_`, unit at the end (`_per_` for rates). They can be used directly in code, e.g. `df.temperature_c` (pandas), `d$weight_pct` (R), `T.dtg_pct_per_min` (MATLAB), with no renaming and no special
 characters. The app shows readable names, and the info file lists each
 CSV column with its readable name and unit.
 
