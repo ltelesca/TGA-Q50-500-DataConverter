@@ -30,14 +30,6 @@ The first time it runs, Windows may show *"Windows protected your PC"* (the .exe
 
 The file list shows sample name, run date, number of points, duration and run type for each file. The Status column turns **green** when a file is converted and **red** if it cannot be read or the conversion fails (the reason is shown).
 
-### Defaults
-
-- Run type: **Auto-detect**
-- Columns to export: **Time, Temperature, Weight** on; purge flows and gas off
-- Variables to calculate: **Weight (%)** on; everything else off
-- Info file **on**; final residue and temperature at mass loss **off**
-- Save options: reduction **off**, output to **the same folder as each file**
-
 ## Run type: ramp or cycling
 
 Each file is classified when it is added, and the result is shown in the **Run type** column:
@@ -54,7 +46,7 @@ For each run, two files are produced next to the original (or in the folder chos
 | File | Contents |
 |---|---|
 | `sample_001.csv` | Plain table; comma-separated, plain ASCII  |
-| `sample_001_info.txt` | Info file; selection in section 4 |
+| `sample_001_info.txt` | Info file; selection in section 2 |
 
 - The run number is kept in the name, so `sample.001` and `sample.002` never overwrite each other. Names without a run number are kept whole (`6.27 MgCl 1 180` → `6.27 MgCl 1 180.csv`).
 - Two runs with the same name in one batch (e.g. from different folders, saved to one folder) get ` (2)`, ` (3)`, … instead of overwriting.
@@ -66,7 +58,7 @@ For each run, two files are produced next to the original (or in the folder chos
 
 **Every file gets the same columns** for the same settings, so one analysis script works for a whole batch. If the instrument did not record a signal, the column is preserved as **empty**. Nothing fails; the column is listed under **Flags** at the top of the info file (see *Flags* below).
 
-### Section 2 – Columns to export (recorded by the instrument)
+### Section 1 – Columns to export (recorded by the instrument)
 
 | In the app | CSV column | Source |
 |---|---|---|
@@ -77,7 +69,7 @@ For each run, two files are produced next to the original (or in the folder chos
 | Sample purge flow (mL/min) | `sample_flow_ml_per_min` | Raw signal |
 | Active gas (1 or 2) | `gas` | From the gas-switch records stored in the file |
 
-### Section 3 – Variables to calculate
+### Section 2 – Variables to calculate
 
 Each ticked variable becomes a column in the CSV.
 
@@ -91,33 +83,22 @@ Each ticked variable becomes a column in the CSV.
 | Derivative weight (%/°C) | `dtg_pct_per_c` | − slope of Weight (%) vs temperature; blank where the heating rate is below 0.1 °C/min (isothermal segments) |
 | Derivative weight (mg/min) | `dtg_mg_per_min` | − slope of Weight vs time |
 
-**Sign:** derivatives are **positive for mass loss** and negative for mass gain, the same convention as Universal Analysis.
+**Derivatives** are **positive for mass loss** and negative for mass gain.
 
 **Smoothing window** (heating rate and derivatives; default 10 s enabled only when one of those variables is ticked): each slope is a least-squares straight-line fit over a window centred on the point, so peaks are not shifted, only broadened as the window grows. A different smoothing windows value can be chosen.
 
 **Dry basis notes:**
 
 - **Which weight is the reference.** If the method holds the sample isothermally at the reference temperature (e.g. *Ramp 10 °C/min to 150 °C*, *Isothermal for 30 min*), the weight at the **end of the hold** is used. Otherwise the weight at the instant it is **first reached** is used.
-  - The hold must be programmed in the method, at the reference
-    temperature (within 3 °C), the first time the run gets there. A hold
-    at another temperature (e.g. hold at 110 °C, reference 150 °C) does
-    not count, and neither do slow ramps or Hi-Res slow-downs.
   - The end of the hold is taken from the data: the last point before the
     temperature starts moving again.
   - The info file states which case was used, with the time and weight,
     e.g. `Dry reference: weight at the end of the isothermal hold at 150 °C
     (30 min in the method; ends at 42.62 min), 4.10044 mg`.
 - **Values above 100 %.** Before the reference point the sample still
-  contains moisture, so dry-basis values there are above 100 %. This is
-  expected.
-- **One reference for the whole run**, so cycles stay on the same scale.
-- **Fast ramps without a hold**: some samples are not completely dry at
-  the instant 150 °C is reached (0.03–0.86 % further loss before
-  decomposition in our test runs at 50 °C/min). A drying hold in the
-  method, or a higher reference temperature still below any
-  decomposition, avoids this.
+  contains moisture, so dry-basis values there are as expected above 100 %. 
 
-### Section 4 – Info file
+### Section 3 – Info file
 
 - **Write info file** – on by default; the options below are greyed out when it is off.
 - **Final residue and mass loss** – off by default.
@@ -126,12 +107,7 @@ Each ticked variable becomes a column in the CSV.
   (comma-separated, e.g. `2, 5, 20`).
 - **Mass loss between temperatures** – off by default; when ticked, choose
   the number of **steps (1–6)** and enter a **From** and **To**
-  temperature for each (e.g. 25 → 150 °C for moisture, 150 → 600 °C for
-  decomposition). See *Mass loss between temperatures* below.
-
-With all results off, the info file still contains the run details,
-method steps, gas switches and run type, and for cycling runs the start
-and end time and temperature range of each cycle.
+  temperature for each. See *Mass loss between temperatures* below.
 
 When ticked, results are computed from every recorded point:
 
@@ -184,9 +160,7 @@ points), and reports:
 - **Loss (% of initial)** = loss / first recorded weight; consecutive
   steps add up (25–150 + 150–600 = 25–600);
 - **Loss (% of dry)**, only when *Weight (%), dry basis* is ticked = loss /
-  dry weight (same reference temperature as the dry-basis column). For a
-  step below the reference temperature this is the water lost per 100 mg
-  of dry material.
+  dry weight (same reference temperature as the dry-basis column). 
 
 Ramp runs get one row per step. Cycling runs get one table per step with
 one row per cycle; there the % is relative to the **weight at the start
@@ -300,21 +274,3 @@ To build locally (Windows, Python 3.8 or newer; use 3.8 for Windows 7):
 pip install pyinstaller tkinterdnd2
 pyinstaller --onefile --windowed --name TGA-Q500-DataConverter --collect-all tkinterdnd2 app.py
 ```
-
-## Version history
-
-| Version | Changes |
-|---|---|
-| 0.7.0 | Info file: **Flags** section at the top (`[!]`, or `Flags: none`), affected entries marked `[!] see Flags`; dry basis uses the weight at the end of an isothermal hold at the reference temperature, and the info file states which reference was used; note that dry-basis values before the reference can exceed 100 %; mass loss between temperatures up to 6 steps; green/red status colours fixed on the Windows 7 builds |
-| 0.6.1 | Window opens sized to its content and to the Windows display scaling (sharp text at 125/150 %), grows when mass-loss steps are added, scroll bar only when the screen is too small; signals the instrument did not record give empty columns, explained next to each column in the info file; tested on Q50 data |
-| 0.6.0 | Code-friendly CSV column names (`time_min`, `temperature_c`, …) in plain ASCII, readable names listed in the info file; mass loss between temperatures (1–5 steps, ramp and per cycle, % of initial and % of dry); window scrolls on small screens; file-list buttons in a 2×2 grid |
-| 0.5.3 | Section names: "Variables to calculate" (3) and "Save options" (5) |
-| 0.5.2 | Info file: residue and temperature at mass loss off by default |
-| 0.5.1 | Windows 7 builds (32- and 64-bit); Python 3.8 compatibility fix |
-| 0.5.0 | Raw files recognised by content (names with dots / no extension); derivative sign as in UA (positive = loss) and %/°C computed against temperature; cycles only where the method programmes a cool-down (fixes Hi-Res runs); unique output names within a batch; faster derivatives |
-| 0.4.0 | Run type per file (auto-detected ramp / cycling, double-click to change, all-files selector); per-cycle results; new section 4 "Info file" (residue, T at 1/5/10/50 % or custom list); Options becomes section 5 |
-| 0.3.0 | Weight dry basis, mass loss, heating rate, DTG in mg/min; results section in info file |
-| 0.2.1 | Nothing remembered between sessions |
-| 0.2.0 | Separate "export" and "calculate" sections; Desktop guard; smoothing window greyed out unless used |
-| 0.1.1 | Fixed buttons that did nothing on Windows; drag-and-drop; error messages and error.log |
-| 0.1.0 | First version |
