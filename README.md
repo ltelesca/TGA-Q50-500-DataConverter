@@ -1,6 +1,6 @@
 # TGA Q50-500 Data Converter & Analyzer
 
-Small Windows app that converts TA Instruments TGA Q50-500 raw data files (`.001`, `.002`, … `.00n`) into CSV files.
+Small Windows app that analyzes and converts TA Instruments TGA Q50-500 raw data files (`.001`, `.002`, … `.00n`) into CSV files.
 
 Current version: **0.7.0**
 
@@ -14,7 +14,6 @@ Download from the **Actions** tab (latest successful run → *Artifacts*). Each 
 | `TGA-Q500-DataConverter-Win7-64bit` | Windows 7, 64-bit |
 | `TGA-Q500-DataConverter-Win7-32bit` | Windows 7, 32-bit |
 
-
 The Windows 7 versions are built with Python 3.8, the last Python that runs on Windows 7. They need **Service Pack 1** and the Windows **Universal C Runtime** update (KB2999226). All three are built from the same code and produce identical CSV and info files.
 
 The first time it runs, Windows may show *"Windows protected your PC"* (the .exe is not digitally signed): click **More info → Run anyway**.
@@ -22,7 +21,7 @@ The first time it runs, Windows may show *"Windows protected your PC"* (the .exe
 ## Using it
 
 1. **Add files** – *Add files…*, *Add folder…* (picks up every TGA raw file in it), or drag files/folders onto the file list. Raw files are recognised by their **content**, not their name: `.001`, `.002`, … as well as names with dots or no extension. Text exports, PDFs and method files (`.mth`) are rejected. Aborted, short and still-running runs  convert normally; empty runs are flagged.
-2. **Check the run type** of each file, change manually if needed, see below.
+2. **Check the run type** of each file, it can be changed manually if needed.
 3. **Section 2 – Columns to export:** signals recorded by the instrument to export.
 4. **Section 3 – Variables to calculate:** values calculated from the recorded signals.
 5. **Section 4 – Info file:** whether to write the info file and which results to put in it.
@@ -36,7 +35,7 @@ The file list shows sample name, run date, number of points, duration and run ty
 - Run type: **Auto-detect**
 - Columns to export: **Time, Temperature, Weight** on; purge flows and gas off
 - Variables to calculate: **Weight (%)** on; everything else off
-- Info file **on**; final residue and temperature at mass loss **off** (tick them to add results)
+- Info file **on**; final residue and temperature at mass loss **off**
 - Save options: reduction **off**, output to **the same folder as each file**
 
 ## Run type: ramp or cycling
@@ -44,8 +43,7 @@ The file list shows sample name, run date, number of points, duration and run ty
 Each file is classified when it is added, and the result is shown in the **Run type** column:
 
 - **Ramp** – one or more heating ramps, possibly at different rates, with isothermal holds or small temperature dips in between.
-- **Cycling (N)** – the sample is cooled significantly and heated again, N times. As a default, a new cycle starts where heating resumes after the temperature has dropped **at least 50 °C** below the highest temperature of the current cycle and then risen again by **at least 50 °C**, **and the method programmes such a cool-down**. The temperature threshold can be adjusted
-Small dips of 10–20 °C do not start a new cycle, and neither do temperature drops the instrument makes on its own (Hi-Res runs slow down or reverse heating during fast mass loss). Any hold at the low temperature (for example a CO₂-uptake  step) stays in the cycle it follows.
+- **Cycling (N)** – the sample is cooled significantly and heated again, N times. As a default, a new cycle starts where heating resumes after the temperature has dropped **at least 50 °C** below the highest temperature of the current cycle and then risen again by **at least 50 °C**, **and the method programmes such a cool-down**. The temperature threshold for cycles detection can be adjusted.
 
 Batches can mix both kinds; each file is processed according to its own run type. To correct a file, **double-click its Run type cell** (it toggles between Ramp and Cycling and shows "– manual"). The **Run type** selector next to the file list can also treat all files as ramp or all as cycling. The info file always states the run type used and whether it was detected.
 
@@ -66,18 +64,7 @@ For each run, two files are produced next to the original (or in the folder chos
 
 ## Columns and variables
 
-**CSV column names are code-friendly**: lowercase, plain ASCII, words joined by `_`, unit at the end (`_per_` for rates). They can be used directly in code, e.g. `df.temperature_c` (pandas), `d$weight_pct` (R), `T.dtg_pct_per_min` (MATLAB), with no renaming and no special
-characters. The app shows readable names, and the info file lists each
-CSV column with its readable name and unit.
-
-**Every file gets the same columns** for the same settings, so one
-analysis script works for a whole batch. If the instrument did not
-record a signal (a Q50 set up to record only time, temperature and
-weight has no purge flows; a method without gas selection has no active
-gas), the column is still there but its cells are **empty** (not "NA":
-empty cells are read as missing values by Excel, pandas, R and MATLAB
-alike). Nothing fails; the column is listed under **Flags** at the top
-of the info file (see *Flags* below).
+**Every file gets the same columns** for the same settings, so one analysis script works for a whole batch. If the instrument did not record a signal, the column is preserved as **empty**. Nothing fails; the column is listed under **Flags** at the top of the info file (see *Flags* below).
 
 ### Section 2 – Columns to export (recorded by the instrument)
 
