@@ -91,28 +91,13 @@ Each ticked variable becomes a column in the CSV.
 | Derivative weight (%/°C) | `dtg_pct_per_c` | − slope of Weight (%) vs temperature; blank where the heating rate is below 0.1 °C/min (isothermal segments) |
 | Derivative weight (mg/min) | `dtg_mg_per_min` | − slope of Weight vs time |
 
-**Sign:** derivatives are **positive for mass loss** and negative for
-mass gain, the same convention as Universal Analysis.
+**Sign:** derivatives are **positive for mass loss** and negative for mass gain, the same convention as Universal Analysis.
 
-In the CSV, recorded signals come first, then calculated variables.
-
-**Smoothing window** (heating rate and derivatives; default 10 s,
-enabled only when one of those variables is ticked): each slope is a
-least-squares straight-line fit over a window centred on the point, so
-peaks are not shifted, only broadened as the window grows. What matters
-is the temperature span, heating rate × window: 10 s is 0.3 °C at
-2 °C/min but 8 °C at 50 °C/min. For fast ramps with sharp steps,
-2–4 s keeps peaks sharper. Universal Analysis uses a 60 s window: set
-60 s to reproduce UA's derivative curves.
+**Smoothing window** (heating rate and derivatives; default 10 s enabled only when one of those variables is ticked): each slope is a least-squares straight-line fit over a window centred on the point, so peaks are not shifted, only broadened as the window grows. A different smoothing windows value can be chosen.
 
 **Dry basis notes:**
 
-- **Which weight is the reference.** If the method holds the sample
-  isothermally at the reference temperature (e.g. *Ramp 10 °C/min to
-  150 °C*, *Isothermal for 30 min*), the weight at the **end of the
-  hold** is used: the hold is there to dry the sample before the ramp
-  goes on. Otherwise (a plain ramp through the reference temperature) the
-  weight at the instant it is **first reached** is used.
+- **Which weight is the reference.** If the method holds the sample isothermally at the reference temperature (e.g. *Ramp 10 °C/min to 150 °C*, *Isothermal for 30 min*), the weight at the **end of the hold** is used. Otherwise the weight at the instant it is **first reached** is used.
   - The hold must be programmed in the method, at the reference
     temperature (within 3 °C), the first time the run gets there. A hold
     at another temperature (e.g. hold at 110 °C, reference 150 °C) does
