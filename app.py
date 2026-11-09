@@ -12,7 +12,16 @@ import traceback
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from analysis import CYCLING, RAMP, STANDARD_LOSS_LEVELS, parse_loss_levels, parse_temperature
+from analysis import (
+    CYCLE_MAX_C,
+    CYCLE_MIN_C,
+    CYCLE_THRESHOLD_DEFAULT,
+    CYCLING,
+    RAMP,
+    STANDARD_LOSS_LEVELS,
+    parse_loss_levels,
+    parse_temperature,
+)
 from converter import (
     APP_NAME,
     APP_VERSION,
@@ -140,6 +149,7 @@ class App(_BaseTk):
     def __init__(self) -> None:
         super().__init__()
         self.title(f"{APP_NAME}  v{APP_VERSION}")
+        self._set_icon()
         # Display scaling: 1.0 at 100 %, 1.25 at 125 %, ... (Tk reports points per pixel x 72/96).
         try:
             self.ui_scale = max(1.0, float(self.tk.call("tk", "scaling")) * 72 / 96)
@@ -280,6 +290,16 @@ class App(_BaseTk):
         mode = ttk.Combobox(btns, textvariable=self.mode_var, values=self.MODES, state="readonly", width=16)
         mode.pack(fill="x", pady=2)
         mode.bind("<<ComboboxSelected>>", lambda e: self._refresh_run_types())
+        thr = ttk.Frame(btns)
+        thr.pack(fill="x", pady=(4, 0))
+        ttk.Label(thr, text="Cycle threshold:").pack(side="left")
+        self.threshold_var = tk.StringVar(value=f"{CYCLE_THRESHOLD_DEFAULT:g}")
+        self.threshold = CYCLE_THRESHOLD_DEFAULT  # value currently applied to the file list
+        thr_entry = ttk.Entry(thr, textvariable=self.threshold_var, width=5, justify="right")
+        thr_entry.pack(side="left", padx=(4, 2))
+        ttk.Label(thr, text="°C").pack(side="left")
+        thr_entry.bind("<Return>", lambda e: self._apply_threshold())
+        thr_entry.bind("<FocusOut>", lambda e: self._apply_threshold())
         ttk.Label(
             btns, text="Double-click a Run type\ncell to change one file.", style="Sub.TLabel", justify="left"
         ).pack(anchor="w", pady=(2, 0))
@@ -528,6 +548,16 @@ class App(_BaseTk):
         if getattr(self, "_shown", False):
             self._fit_window()
 
+    def _set_icon(self) -> None:
+        """Window / taskbar icon. The .ico is packed into the .exe (PyInstaller --add-data)."""
+        base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+        ico = base / "tga_converter.ico"
+        if sys.platform == "win32" and ico.is_file():
+            try:
+                self.iconbitmap(default=str(ico))
+            except tk.TclError:
+                pass
+
     # ---------- run type ----------
     def _effective_type(self, info: dict) -> tuple[str, str]:
         mode = self.mode_var.get()
@@ -548,6 +578,33 @@ class App(_BaseTk):
         if source == "set by user for this file":
             label += " – manual"
         self.tree.set(iid, "runtype", label)
+
+    def _apply_threshold(self) -> bool:
+        """Re-detect cycles in every file with the threshold typed by the user (live)."""
+        text = self.threshold_var.get().replace(",", ".").strip()
+        try:
+            value = float(text)
+            if not CYCLE_MIN_C <= value <= CYCLE_MAX_C:
+                raise ValueError
+        except ValueError:
+            # restore first: the message box takes the focus and would fire <FocusOut> again
+            self.threshold_var.set(f"{self.threshold:g}")
+            messagebox.showwarning(
+                APP_NAME, f"Cycle threshold must be a number between {CYCLE_MIN_C:g} and {CYCLE_MAX_C:g} °C."
+            )
+            return False
+        if value == self.threshold:
+            return True
+        self.threshold = value
+        for iid, info in self.files.items():
+            if not info["run"]:
+                continue
+            info["cycles"] = cycles_for(info["run"], value)
+            info["detected"] = CYCLING if len(info["cycles"]) > 1 else RAMP
+            if info["override"] == info["detected"]:
+                info["override"] = None
+            self._show_run_type(iid)
+        return True
 
     def _refresh_run_types(self) -> None:
         for iid in self.files:
@@ -651,7 +708,7 @@ class App(_BaseTk):
                     raise TGAFormatError("not a TGA raw data file")
                 run = read_tga(p)
                 info["run"] = run
-                info["cycles"] = cycles_for(run)
+                info["cycles"] = cycles_for(run, self.threshold)
                 info["detected"] = CYCLING if len(info["cycles"]) > 1 else RAMP
                 dur = run.rows[-1][0] - run.rows[0][0]
                 status = "Ready" if run.complete else "Ready (run incomplete)"
@@ -771,6 +828,7 @@ class App(_BaseTk):
             dtg_window_s=window,
             dry_temp_c=dry,
             output_dir=outdir,
+            cycle_threshold_c=self.threshold,
         )
 
     # ---------- conversion ----------
@@ -780,6 +838,8 @@ class App(_BaseTk):
         jobs = [(iid, v) for iid, v in self.files.items() if v["run"]]
         if not jobs:
             messagebox.showinfo(APP_NAME, "Add at least one readable TGA raw file first.")
+            return
+        if not self._apply_threshold():  # in case it was typed and Convert clicked straight away
             return
         opts = self._collect_options()
         if opts is None:

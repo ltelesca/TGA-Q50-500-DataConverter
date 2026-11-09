@@ -47,6 +47,8 @@ jobs:
         run: >
           pyinstaller --noconfirm --onefile --windowed
           --name ${{ matrix.exe }}
+          --icon tga_converter.ico
+          --add-data "tga_converter.ico;."
           --collect-all tkinterdnd2
           app.py
 

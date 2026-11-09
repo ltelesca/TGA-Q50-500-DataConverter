@@ -7,10 +7,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from analysis import (
-    COOL_DROP_C,
+    CYCLE_THRESHOLD_DEFAULT,
     CYCLING,
     RAMP,
-    REHEAT_RISE_C,
     STANDARD_LOSS_LEVELS,
     HOLD_TOL_C,
     DryReference,
@@ -24,7 +23,7 @@ from analysis import (
 from tga_reader import TGARun, has_run_number
 
 APP_NAME = "TGA Q500 Data Converter"
-APP_VERSION = "0.7.0"
+APP_VERSION = "0.8.0"
 
 UA_POINT_TARGET = 19000
 UA_REDUCE_ABOVE = 20000  # UA leaves runs of up to ~19,800 points untouched; 21,450 were reduced
@@ -84,6 +83,7 @@ class ExportOptions:
     info_tloss: bool = False
     tloss_levels: list[float] = field(default_factory=lambda: list(STANDARD_LOSS_LEVELS))
     mass_loss_intervals: list[tuple[float, float]] = field(default_factory=list)  # empty = off
+    cycle_threshold_c: float = CYCLE_THRESHOLD_DEFAULT
     output_dir: Path | None = None  # None = next to the source file
 
 
@@ -160,7 +160,7 @@ def dry_ref_for(run: TGARun, opts: ExportOptions) -> DryReference | None:
     if ti is None or wi is None or not run.rows:
         return DryReference(opts.dry_temp_c)
     return dry_reference([r[0] for r in run.rows], [r[ti] for r in run.rows], [r[wi] for r in run.rows],
-                         opts.dry_temp_c, run.get_all("OrgMethod"))
+                         opts.dry_temp_c, run.get_all("OrgMethod"), [ts for ts, _ in run.gas_events])
 
 
 def dry_ref_text(ref: DryReference) -> str:
@@ -311,7 +311,10 @@ def _results_lines(run, opts, run_type, run_type_source, cycles) -> list[str]:
     W = [r[wi] for r in run.rows]
     levels = opts.tloss_levels if opts.info_tloss else []
     n = len(run.rows)
-    out = ["", f"Run type: {run_type_label(run_type, len(cycles))}  ({run_type_source})"]
+    thr = opts.cycle_threshold_c
+    thr_src = "default" if thr == CYCLE_THRESHOLD_DEFAULT else "set by user"
+    out = ["", f"Run type: {run_type_label(run_type, len(cycles))}  ({run_type_source})",
+           f"Cycle threshold: {thr:g} °C ({thr_src})"]
 
     if run_type == RAMP:
         if not (opts.info_residue or opts.info_tloss):
@@ -381,19 +384,22 @@ def _interval_flags(run, opts, run_type, cycles) -> dict[tuple[float, float], st
         segs = [(0, len(T))] if run_type == RAMP else cycles
         if not any(interval_loss(T[s0:s1], W[s0:s1], a, b).reached for s0, s1 in segs):
             if run_type == RAMP and T[0] >= b:
-                out[(a, b)] = (f"mass loss {a:g}-{b:g} °C: the run starts at {T[0]:.1f} °C, "
-                               f"already above {b:g} °C")
+                out[(a, b)] = (f"Mass loss {a:g}-{b:g} °C: the run starts at {T[0]:.1f} °C, "
+                               f"already above {b:g} °C. Not calculated.")
             else:
-                where = "the run" if run_type == RAMP else "any cycle"
-                out[(a, b)] = (f"mass loss {a:g}-{b:g} °C: not reached while heating in {where} "
-                               f"(maximum temperature {max(T):.1f} °C)")
+                where = "" if run_type == RAMP else " in any cycle"
+                out[(a, b)] = (f"Mass loss {a:g}-{b:g} °C: not reached while heating{where} "
+                               f"(maximum temperature {max(T):.1f} °C). Not calculated.")
     return out
 
 
 def _interval_lines(run, opts, run_type, cycles) -> list[str]:
     ti, wi = _signal_index(run, "Temperature"), _signal_index(run, "Weight")
+    t = [r[0] for r in run.rows]
     T = [r[ti] for r in run.rows]
     W = [r[wi] for r in run.rows]
+    steps = run.get_all("OrgMethod")
+    switches = [ts for ts, _ in run.gas_events]
     w0 = W[0]
     ref = dry_ref_for(run, opts)
     w_dry = ref.weight if ref is not None else None
@@ -419,7 +425,7 @@ def _interval_lines(run, opts, run_type, cycles) -> list[str]:
             widths += [16]
         out.append("  " + head[0].ljust(widths[0]) + " " + " ".join(h.rjust(w) for h, w in zip(head[1:], widths[1:])))
         for a, b in opts.mass_loss_intervals:
-            r = interval_loss(T, W, a, b)
+            r = interval_loss(T, W, a, b, t, steps, switches)
             cells = [label(r)]
             if r.reached:
                 cells += [f"{r.w_from:.4f}", f"{r.w_to:.4f}", f"{r.loss_mg:.4f}", f"{100 * r.loss_mg / w0:.2f}"]
@@ -441,7 +447,7 @@ def _interval_lines(run, opts, run_type, cycles) -> list[str]:
                 wd.append(16)
             out.append("  " + " ".join(x.rjust(w) for x, w in zip(h, wd)))
             for k, (s0, s1) in enumerate(cycles, 1):
-                r = interval_loss(T[s0:s1], W[s0:s1], a, b)
+                r = interval_loss(T[s0:s1], W[s0:s1], a, b, t[s0:s1], steps, switches)
                 cyc = f"{k}{'*' if r.start_used is not None else ''}"
                 if r.start_used is not None:
                     flagged = True
@@ -455,7 +461,7 @@ def _interval_lines(run, opts, run_type, cycles) -> list[str]:
                 out.append("  " + " ".join(c.rjust(w) for c, w in zip(cells, wd)))
         out.append("  n.r. = interval not reached in that cycle (only the heating part of each cycle is used).")
     out.append("  W start / W end = weight when the temperature first reaches the From / To temperature while heating;")
-    out.append("  with an isothermal hold at that temperature, the weight at the start of the hold is used.")
+    out.append("  if the method holds the sample isothermally at that temperature, the weight at the end of the hold is used.")
     out.append("  Loss is positive for mass lost, negative for mass gained.")
     if flagged:
         out.append("  * The run (or cycle) starts above the From temperature, so its first recorded point is used as start.")
@@ -487,13 +493,13 @@ def collect_flags(run, opts, headers, notes, run_type=RAMP, cycles=None) -> tupl
             groups.setdefault(note[len("EMPTY: "):], []).append(h)
             flagged_headers.add(h)
     for reason, hs in groups.items():
-        what = "columns" if len(hs) > 1 else "column"
-        extra = ""
-        if hs == [by_key["weight_pct_dry"].header] and opts.mass_loss_intervals:
-            extra = "; no 'Loss (% of dry)' in mass loss between temperatures"
-        flags.append(f"{', '.join(hs)}: {reason} ({what} kept but empty{extra})")
+        line = f"{', '.join(hs)}: {reason}. {'Columns' if len(hs) > 1 else 'Column'} left empty."
+        if by_key["weight_pct_dry"].header in hs and opts.mass_loss_intervals:
+            line += ' No "Loss (% of dry)" in mass loss between temperatures.'
+        flags.append(line)
     if not run.complete:
-        flags.append("end-of-data marker missing: the file may be truncated, or the run was still in progress")
+        flags.append("End-of-data marker missing: the file may be truncated, or the run was still in progress. "
+                     "Converted up to the last point.")
     if opts.mass_loss_intervals:
         flags += list(_interval_flags(run, opts, run_type, cycles).values())
     return flags, flagged_headers
@@ -519,8 +525,6 @@ def build_info(
     if flags:
         lines.append("Flags")
         lines += [f"  [!] {f}" for f in flags]
-        if flagged_headers:
-            lines.append("  (Empty columns are kept so that every file in a batch has the same columns.)")
     else:
         lines.append("Flags: none")
     lines += [
@@ -602,8 +606,8 @@ def build_info(
     if run_type == CYCLING:
         lines.append(
             f"  Cycles: a new cycle starts where heating resumes after the temperature has dropped at least "
-            f"{COOL_DROP_C:g} °C below the cycle's maximum and then risen again by at least {REHEAT_RISE_C:g} °C, "
-            "provided the method programmes such a cool-down."
+            f"{opts.cycle_threshold_c:g} °C below the cycle's maximum and then risen again by at least "
+            f"{opts.cycle_threshold_c:g} °C (cycle threshold), provided the method programmes such a cool-down."
         )
     if opts.reduce_like_ua and len(run.rows) > UA_REDUCE_ABOVE:
         lines.append(
@@ -616,15 +620,15 @@ def build_info(
     return "\r\n".join(lines) + "\r\n"
 
 
-def cycles_for(run: TGARun) -> list[tuple[int, int]]:
+def cycles_for(run: TGARun, threshold: float = CYCLE_THRESHOLD_DEFAULT) -> list[tuple[int, int]]:
     """Cycles found in the data, but only if the method programmes a cool-down."""
     ti = _signal_index(run, "Temperature")
     if ti is None or not run.rows:
         return [(0, len(run.rows))]
     T = [r[ti] for r in run.rows]
-    if method_programs_cooling(run.get_all("OrgMethod"), T[0]) is False:
+    if method_programs_cooling(run.get_all("OrgMethod"), T[0], threshold) is False:
         return [(0, len(run.rows))]
-    return detect_cycles([r[0] for r in run.rows], T)
+    return detect_cycles([r[0] for r in run.rows], T, threshold)
 
 
 def export_run(
@@ -638,7 +642,7 @@ def export_run(
     """run_type None = detect. cycles may be passed in if already detected.
     stem overrides the output file name (used to keep names unique in a batch)."""
     if cycles is None:
-        cycles = cycles_for(run)
+        cycles = cycles_for(run, opts.cycle_threshold_c)
     if run_type is None:
         run_type = CYCLING if len(cycles) > 1 else RAMP
     headers, table, _, notes = build_table(run, opts)

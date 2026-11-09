@@ -96,6 +96,45 @@ assert not r.hold and abs(r.time - 8.5) < 0.05
 r = dry_reference(t, Th, Wh, 1500, steps)
 assert r.weight is None
 
+# mass loss between temperatures: end of a programmed hold at From / To
+r = interval_loss(Th, Wh, 25, 150, t, steps)   # To = hold temperature -> end of hold
+assert r.hold_to and abs(r.w_to - 9.5) < 0.01, r
+r = interval_loss(Th, Wh, 150, 300, t, steps)  # From = hold temperature -> end of hold
+assert r.hold_from and abs(r.w_from - 9.5) < 0.01, r
+r2 = interval_loss(Th, Wh, 150, 300)           # no method: first reach, as before
+assert not r2.hold_from and r2.w_from > 9.5
+a1, a2, a3 = (interval_loss(Th, Wh, x, y, t, steps) for x, y in ((25, 150), (150, 300), (25, 300)))
+assert abs(a1.loss_mg + a2.loss_mg - a3.loss_mg) < 1e-9  # steps still add up
+r = interval_loss(Th, Wh, 100, 200, t, ["1: Ramp 10.00 °C/min to 100.00 °C", "2: Isothermal for 5.00 min"])
+assert not r.hold_from  # the data pass straight through 100 °C: no hold, first reach
+
+# the hold never runs past its programmed length or a gas switch (e.g. burn-off after a hold)
+short = ["1: Ramp 10.00 °C/min to 150.00 °C", "2: Isothermal for 5.00 min", "3: Select gas 2"]
+r = interval_loss(Th, Wh, 25, 150, t, short)
+assert r.hold_to and abs(r.w_to - (10 - 0.5 * 17.5 / 30)) < 0.01, r  # 12.5 + 5 min
+r = interval_loss(Th, Wh, 25, 150, t, steps, switches=[15.0])
+assert r.hold_to and abs(r.w_to - (10 - 0.5 * 15 / 30)) < 0.01, r
+assert abs(dry_reference(t, Th, Wh, 150, steps, [15.0]).weight - 9.75) < 0.01
+
+# cycle threshold: 30 °C cycles count only when the threshold is 30 or less
+small = [20 + 10 * x if x < 15 else (170 - 10 * (x - 15) if x < 18 else 140 + 10 * (x - 18)) for x in t]
+assert len(detect_cycles(t, small)) == 1
+assert len(detect_cycles(t, small, 25)) == 2
+assert method_programs_cooling(["1: Ramp 10 °C/min to 170.00 °C", "2: Ramp 10 °C/min to 140.00 °C",
+                                "3: Ramp 10 °C/min to 300.00 °C"], 20, 25) is True
+assert method_programs_cooling(["1: Ramp 10 °C/min to 170.00 °C", "2: Ramp 10 °C/min to 140.00 °C",
+                                "3: Ramp 10 °C/min to 300.00 °C"], 20) is False
+_warn = app.messagebox.showwarning
+app.messagebox.showwarning = lambda *args, **kw: None  # don't block on the expected warning
+a.threshold_var.set("5")
+assert not a._apply_threshold() and a.threshold == 50 and a.threshold_var.get() == "50"
+a.threshold_var.set("30")
+assert a._apply_threshold() and a.threshold == 30 and a._collect_options().cycle_threshold_c == 30
+a.threshold_var.set("50")
+a._apply_threshold()
+app.messagebox.showwarning = _warn
+assert Path(__file__).resolve().parents[1].joinpath("tga_converter.ico").is_file()
+
 a.update()
 a.destroy()
 print("GUI smoke test passed")
