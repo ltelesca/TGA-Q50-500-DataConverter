@@ -20,8 +20,8 @@ The first time it runs, Windows may show *"Windows protected your PC"* (the .exe
 
 ## Using it
 
-1. **Add files** – *Add files…*, *Add folder…* (picks up every TGA raw file in it), or drag files/folders onto the file list. Raw files are recognised by their **content**, not their name, so names with dots or no extension work too. Text exports, PDFs and method files (`.mth`) are rejected. Aborted, short and still-running runs convert normally; empty runs are flagged.
-2. **Check the run type** of each file; it can be changed manually if needed.
+1. **Section 1 – Files:** add files with *Add files…*, *Add folder…* (picks up every TGA raw file in it), or drag files/folders onto the file list. Raw files are recognised by their **content**, not their name, so names with dots or no extension work too. Text exports, PDFs and method files (`.mth`) are rejected. Aborted, short and still-running runs convert normally; empty runs are flagged.
+2. **Check the run type** of each file (also in section 1); it can be changed manually if needed.
 3. **Section 2 – Columns to export:** signals recorded by the instrument.
 4. **Section 3 – Variables to calculate:** values calculated from the recorded signals.
 5. **Section 4 – Info file:** whether to write the info file and which results to put in it.
@@ -30,7 +30,7 @@ The first time it runs, Windows may show *"Windows protected your PC"* (the .exe
 
 The file list shows sample name, run date, number of points, duration and run type. The Status column turns **green** when a file is converted and **red** if it cannot be read or the conversion fails (the reason is shown).
 
-## Run type: ramp or cycling
+## Section 1 – Run type: ramp or cycling
 
 Each file is classified when it is added (**Run type** column):
 
