@@ -1,4 +1,4 @@
-# TGA Q50-500 Data Converter
+# TGA Q50-500 Data Converter & Analyzer
 
 Small Windows app that converts TA Instruments TGA Q50-500 raw data files (`.001`, `.002`, … `.00n`) into CSV files.
 
@@ -6,7 +6,7 @@ Current version: **0.7.0**
 
 ## Getting the app
 
-Download from the **Actions** tab of this repository (latest successful run → *Artifacts*). Each is a single .exe; no installation and no Python needed.
+Download from the **Actions** tab (latest successful run → *Artifacts*). Each is a single .exe; no installation and no Python needed.
 
 | Download | For |
 |---|---|
@@ -15,14 +15,14 @@ Download from the **Actions** tab of this repository (latest successful run → 
 | `TGA-Q500-DataConverter-Win7-32bit` | Windows 7, 32-bit |
 
 
-The Windows 7 versions are built with Python 3.8, the last Python that runs on Windows 7. They need **Service Pack 1** and the Windows **Universal C Runtime** update (KB2999226), which a Windows 7 PC that has received Windows Updates already has. All three are built from the same code and produce identical CSV and info files.
+The Windows 7 versions are built with Python 3.8, the last Python that runs on Windows 7. They need **Service Pack 1** and the Windows **Universal C Runtime** update (KB2999226). All three are built from the same code and produce identical CSV and info files.
 
 The first time it runs, Windows may show *"Windows protected your PC"* (the .exe is not digitally signed): click **More info → Run anyway**.
 
 ## Using it
 
-1. **Add files** – *Add files…*, *Add folder…* (picks up every TGA raw file in it), or drag files/folders onto the file list. Raw files are recognised by their **content**, not their name: `.001`, `.002`, … as well as names with dots or no extension (e.g. `6.27 MgCl 1 180`, `2025.02.21_CNI Calicium oxalate std`). Text exports, PDFs and method files (`.mth`) are rejected. Aborted, short and still-running runs  convert normally; empty runs are flagged.
-2. **Check the run type** of each file.
+1. **Add files** – *Add files…*, *Add folder…* (picks up every TGA raw file in it), or drag files/folders onto the file list. Raw files are recognised by their **content**, not their name: `.001`, `.002`, … as well as names with dots or no extension. Text exports, PDFs and method files (`.mth`) are rejected. Aborted, short and still-running runs  convert normally; empty runs are flagged.
+2. **Check the run type** of each file, change manually if needed, see below.
 3. **Section 2 – Columns to export:** signals recorded by the instrument to export.
 4. **Section 3 – Variables to calculate:** values calculated from the recorded signals.
 5. **Section 4 – Info file:** whether to write the info file and which results to put in it.
@@ -44,13 +44,14 @@ The file list shows sample name, run date, number of points, duration and run ty
 Each file is classified when it is added, and the result is shown in the **Run type** column:
 
 - **Ramp** – one or more heating ramps, possibly at different rates, with isothermal holds or small temperature dips in between.
-- **Cycling (N)** – the sample is cooled significantly and heated again, N times. A new cycle starts where heating resumes after the temperature has dropped **at least 50 °C** below the highest temperature of the current cycle and then risen again by **at least 50 °C**, **and the method programmes such a cool-down**. Small dips of 10–20 °C do not start a new cycle, and neither do temperature drops the instrument makes on its own (Hi-Res runs slow down or reverse heating during fast mass loss). Any hold at the low temperature (for example a CO₂-uptake  step) stays in the cycle it follows.
+- **Cycling (N)** – the sample is cooled significantly and heated again, N times. As a default, a new cycle starts where heating resumes after the temperature has dropped **at least 50 °C** below the highest temperature of the current cycle and then risen again by **at least 50 °C**, **and the method programmes such a cool-down**. The temperature threshold can be adjusted
+Small dips of 10–20 °C do not start a new cycle, and neither do temperature drops the instrument makes on its own (Hi-Res runs slow down or reverse heating during fast mass loss). Any hold at the low temperature (for example a CO₂-uptake  step) stays in the cycle it follows.
 
-Batches can mix both kinds; each file is processed according to its own run type. To correct a file, **double-click its Run type cell** (it toggles between Ramp and Cycling and shows "– manual"). The **Run type** selector next to the file list can also treat all files as ramp or all as cycling. The info file always states the run type used and whether it was detected, set for that file, or set for all files.
+Batches can mix both kinds; each file is processed according to its own run type. To correct a file, **double-click its Run type cell** (it toggles between Ramp and Cycling and shows "– manual"). The **Run type** selector next to the file list can also treat all files as ramp or all as cycling. The info file always states the run type used and whether it was detected.
 
 ### Output files
 
-For each run, two files are written next to the original (or in the folder chosen under *This folder*):
+For each run, two files are produced next to the original (or in the folder chosen under *This folder*):
 
 | File | Contents |
 |---|---|
