@@ -20,6 +20,9 @@ The first time it runs, Windows may show *"Windows protected your PC"* (the .exe
 
 ## Using it
 
+![The app window with default settings](docs/app-window.png)
+*The app window with the default settings.*
+
 1. **Section 1 – Files:** add files with *Add files…*, *Add folder…* (picks up every TGA raw file in it), or drag files/folders onto the file list. Raw files are recognised by their **content**, not their name, so names with dots or no extension work too. Text exports, PDFs and method files (`.mth`) are rejected. Aborted, short and still-running runs convert normally; empty runs are flagged.
 2. **Check the run type** of each file (also in section 1); it can be changed manually if needed.
 3. **Section 2 – Columns to export:** signals recorded by the instrument.
@@ -33,6 +36,9 @@ The file list shows sample name, run date, number of points, duration and run ty
 ## Section 1 – Run type: ramp or cycling
 
 Each file is classified when it is added (**Run type** column):
+
+![File list with ramp, cycling and manual run types, and the status of each file](docs/file-list.png)
+*File list after converting: detected ramp and cycling runs, one run set by hand ("– manual"), a converted file with flags ("⚠ see info file"), and a file that is not a raw file (red).*
 
 - **Ramp** – one or more heating ramps, possibly at different rates, with isothermal holds or temperature dips smaller than the cycle threshold in between.
 - **Cycling (N)** – the sample is cooled and heated again, N times. A new cycle starts where heating resumes after the temperature has dropped by at least the **cycle threshold** (default **50 °C**) below the cycle's maximum and risen again by the same amount, **and the method programmes such a cool-down**.
@@ -118,6 +124,10 @@ Further down, affected entries only carry `[!] see Flags`. In the app, the Statu
 Flagged: empty columns (signal not recorded, no gas selection in the method, dry-basis reference temperature never reached), mass-loss steps not reached anywhere in the run, and files with no end-of-data marker. Blanks expected by design (`dtg_pct_per_c` during holds, "n.r." cycles) are explained in the notes, not flagged.
 
 ### Mass loss between temperatures
+
+<img src="docs/info-file-section.png" alt="Section 4 with temperature at mass loss and three mass-loss steps" width="450">
+
+*Section 4 with T at mass loss and three mass-loss steps.*
 
 For each step, the app takes the weight when the temperature **first reaches** the From temperature and then the To temperature while heating (interpolated). If the method holds the sample isothermally at the From or To temperature, the weight at the **end of the hold** is used instead (same rule as the dry basis), so drying during a hold at 150 °C counts in the step that ends at 150 °C. It reports:
 
