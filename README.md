@@ -2,7 +2,7 @@
 
 Small Windows app that analyzes and converts TA Instruments TGA Q50-500 raw data files (`.001`, `.002`, … `.00n`) into CSV files.
 
-Current version: **0.8.0**
+Current version: **0.8.1**
 
 ## Getting the app
 
@@ -10,9 +10,9 @@ Download from the **Actions** tab (latest successful run → *Artifacts*). Each 
 
 | Download | For |
 |---|---|
-| `TGA-Q500-DataConverter` | Windows 10 and 11 |
-| `TGA-Q500-DataConverter-Win7-64bit` | Windows 7, 64-bit |
-| `TGA-Q500-DataConverter-Win7-32bit` | Windows 7, 32-bit |
+| `TGA-Q50-500-DataConverter` | Windows 10 and 11 |
+| `TGA-Q50-500-DataConverter-Win7-64bit` | Windows 7, 64-bit |
+| `TGA-Q50-500-DataConverter-Win7-32bit` | Windows 7, 32-bit |
 
 The Windows 7 versions need **Service Pack 1** and the **Universal C Runtime** update (KB2999226). All three produce identical CSV and info files.
 
@@ -137,7 +137,7 @@ Cycling runs get one table per step with one row per cycle, relative to the **we
 
 ## Troubleshooting
 
-Unexpected errors are shown in a message box and appended to `%APPDATA%\TGA-Q500-DataConverter\error.log`. Send that file along with the raw file that caused it.
+Unexpected errors are shown in a message box and appended to `%APPDATA%\TGA-Q50-500-DataConverter\error.log`. Send that file along with the raw file that caused it.
 
 ## For developers
 
@@ -155,5 +155,5 @@ To build locally (Windows, Python 3.8 or newer; use 3.8 for Windows 7):
 
 ```
 pip install pyinstaller tkinterdnd2
-pyinstaller --onefile --windowed --name TGA-Q500-DataConverter --icon tga_converter.ico --add-data "tga_converter.ico;." --collect-all tkinterdnd2 app.py
+pyinstaller --onefile --windowed --name TGA-Q50-500-DataConverter --icon tga_converter.ico --add-data "tga_converter.ico;." --collect-all tkinterdnd2 app.py
 ```

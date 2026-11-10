@@ -1,4 +1,4 @@
-"""TGA Q500 Data Converter - desktop app (Tkinter)."""
+"""TGA Q50-500 Data Converter - desktop app (Tkinter)."""
 
 from __future__ import annotations
 
@@ -137,7 +137,7 @@ DESKTOP_MSG = (
 def settings_path() -> Path:
     """Location of error.log (no settings are stored)."""
     base = os.environ.get("APPDATA") or os.path.join(Path.home(), ".config")
-    return Path(base) / "TGA-Q500-DataConverter" / "settings.json"
+    return Path(base) / "TGA-Q50-500-DataConverter" / "settings.json"
 
 
 MAX_ML_STEPS = 6
@@ -234,7 +234,7 @@ class App(_BaseTk):
 
         head = ttk.Frame(root)
         head.grid(row=0, column=0, sticky="ew", pady=(0, self.px(6)))
-        ttk.Label(head, text="TGA Q500 Data Converter", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(head, text=APP_NAME, style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             head,
             text="Converts TA Instruments TGA raw files (.001, .002, … or any name) to CSV, with a separate info file.",

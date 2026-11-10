@@ -22,8 +22,8 @@ from analysis import (
 )
 from tga_reader import TGARun, has_run_number
 
-APP_NAME = "TGA Q500 Data Converter"
-APP_VERSION = "0.8.0"
+APP_NAME = "TGA Q50-500 Data Converter"
+APP_VERSION = "0.8.1"
 
 UA_POINT_TARGET = 19000
 UA_REDUCE_ABOVE = 20000  # UA leaves runs of up to ~19,800 points untouched; 21,450 were reduced

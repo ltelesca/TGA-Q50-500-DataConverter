@@ -1,6 +1,6 @@
 """Reader for TA Instruments Q-series raw data files (.001, .002, ...).
 
-File layout (reverse-engineered from TGA Q500 files written by Q Series
+File layout (reverse-engineered from TGA Q50 and Q500 files written by Q Series
 software, validated against Universal Analysis text exports):
 
   1. UTF-16-LE text header (with BOM), CRLF-separated "Key value" lines

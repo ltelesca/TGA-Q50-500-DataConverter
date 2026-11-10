@@ -18,16 +18,16 @@ jobs:
       matrix:
         include:
           # Windows 10 / 11 (64-bit)
-          - exe: TGA-Q500-DataConverter
+          - exe: TGA-Q50-500-DataConverter
             python: "3.12"
             arch: x64
             pyinstaller: pyinstaller
           # Windows 7 SP1: Python 3.8 is the last Python that runs on Windows 7
-          - exe: TGA-Q500-DataConverter-Win7-64bit
+          - exe: TGA-Q50-500-DataConverter-Win7-64bit
             python: "3.8"
             arch: x64
             pyinstaller: pyinstaller==5.13.2
-          - exe: TGA-Q500-DataConverter-Win7-32bit
+          - exe: TGA-Q50-500-DataConverter-Win7-32bit
             python: "3.8"
             arch: x86
             pyinstaller: pyinstaller==5.13.2
