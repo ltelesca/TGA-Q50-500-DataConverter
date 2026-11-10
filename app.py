@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Luca Telesca
 """TGA Q50-500 Data Converter - desktop app (Tkinter)."""
 
 from __future__ import annotations

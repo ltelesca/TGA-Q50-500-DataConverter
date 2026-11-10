@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Luca Telesca
 """Reader for TA Instruments Q-series raw data files (.001, .002, ...).
 
 File layout (reverse-engineered from TGA Q50 and Q500 files written by Q Series

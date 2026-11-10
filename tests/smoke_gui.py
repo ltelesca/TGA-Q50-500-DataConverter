@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Luca Telesca
 """Builds the main window and exercises the code paths behind the buttons
 that open dialogs, without showing any dialog. Run on the CI build machine."""
 import sys

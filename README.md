@@ -2,11 +2,11 @@
 
 Small Windows app that analyzes and converts TA Instruments TGA Q50-500 raw data files (`.001`, `.002`, … `.00n`) into CSV files.
 
-Current version: **0.8.1**
+Current version: **1.0.0**
 
 ## Getting the app
 
-Download from the **Actions** tab (latest successful run → *Artifacts*). Each is a single .exe; no installation and no Python needed.
+Download from the **Releases** page (latest release → *Assets*). Each is a single .exe; no installation and no Python needed.
 
 | Download | For |
 |---|---|
@@ -167,3 +167,9 @@ To build locally (Windows, Python 3.8 or newer; use 3.8 for Windows 7):
 pip install pyinstaller tkinterdnd2
 pyinstaller --onefile --windowed --name TGA-Q50-500-DataConverter --icon tga_converter.ico --add-data "tga_converter.ico;." --collect-all tkinterdnd2 app.py
 ```
+
+## Licence
+
+Copyright (c) 2026 Luca Telesca.
+
+Free and open-source software under the **GNU General Public License v3.0 or later** (see [LICENSE](LICENSE)). You may use, study, share and modify it; versions you distribute, modified or not, must stay under the same licence with their source code available. It comes with **no warranty**.

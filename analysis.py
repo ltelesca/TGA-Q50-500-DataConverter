@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Luca Telesca
 """Run-type detection (ramp vs cycling) and per-run / per-cycle results."""
 
 from __future__ import annotations
